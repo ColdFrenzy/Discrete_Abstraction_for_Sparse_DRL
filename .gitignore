@@ -127,3 +127,6 @@ wandb/
 heatmaps/
 plots/
 reward_plots/
+src/algorithms/SAC/models/
+
+src/weights/

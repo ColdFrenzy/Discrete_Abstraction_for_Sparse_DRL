@@ -96,12 +96,13 @@ class ContinuousUAV(Env):
         if self.reward_type == RewardType.model:
             self.values = self.load_values()
 
-    def reward_function(self, obs: np.ndarray) -> Tuple[float, bool]:
+    def reward_function(self, obs: np.ndarray, desired_goal: np.ndarray = None, info: dict = None) -> Tuple[float, bool]:
         terminated = False
         truncated = False
         reward = 0
         log = None
-        
+        if desired_goal is None:
+            desired_goal = self.goal
         # Check for wall 
         if obs[0] <= 0 or obs[0] >= self.size:
             obs[0] = np.clip(obs[0], 0.05, self.size - 0.05)
@@ -121,7 +122,7 @@ class ContinuousUAV(Env):
             
 
         # Check for successful termination
-        if self.is_inside_cell(obs, self.goal):
+        if self.is_inside_cell(obs, desired_goal):
             log = "GOAL REACHED"
             if self.reward_type != RewardType.model:
                 reward += 10
@@ -149,6 +150,36 @@ class ContinuousUAV(Env):
                 break
 
         return obs, reward, terminated, truncated, log
+
+    def reward_function_batch(self, obs: torch.tensor, desired_goal: torch.tensor, info: dict = None) -> Tuple[float, bool]:
+        # obs size [batch_size, 2]
+        reward = []
+        log = None
+        # Check for wall 
+        for i in range(obs.size(0)):
+            step_reward = 0
+            if obs[i, 0] <= 0 or obs[i, 0] >= self.size:
+                obs[i, 0] = np.clip(obs[i, 0], 0.05, self.size - 0.05)
+                step_reward = -1
+            if obs[i, 1] <= 0 or obs[i, 1] >= self.size:
+                obs[i, 1] = np.clip(obs[i, 1], 0.05, self.size - 0.05)
+                step_reward = -1
+            
+            # check for goal
+            if self.is_inside_cell(obs[i], desired_goal[i]):
+                log = "GOAL REACHED"
+                step_reward = 10
+            
+            # Check for failure termination
+            for hole in self.holes:
+                if self.is_inside_cell(obs[i], hole):
+                    step_reward = -10
+                    log = "HOLE"
+                    break
+            reward.append(step_reward)
+        reward = torch.tensor(reward).unsqueeze(1)
+
+        return reward
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, dict]:
         """

@@ -21,7 +21,7 @@ class Actor(nn.Module):
         super().__init__()
         # dimensions
         dimensions = (
-            [env_params["obs_dim"]]
+            [env_params["obs_goal_dim"]]
             + list(hidden_dims)
             + [env_params["action_dim"]]
         )
@@ -43,7 +43,7 @@ class SquashedGaussianActor(nn.Module):
     def __init__(self, env_params, hidden_dims=(512, 512), activation=nn.GELU):
         super().__init__()
         # dimensions
-        dimensions = [env_params["obs_dim"]] + list(hidden_dims)
+        dimensions = [env_params["obs_goal_dim"]] + list(hidden_dims)
         self.pi = network(dimensions, activation)
         self.action_bound = env_params["action_bound"]
         self.mu_layer = nn.Linear(dimensions[-1], env_params["action_dim"])
@@ -86,7 +86,7 @@ class Critic(nn.Module):
         super().__init__()
         # dimensions
         dimensions = (
-            [env_params["obs_dim"] + env_params["action_dim"]]
+            [env_params["obs_goal_dim"] + env_params["action_dim"]]
             + list(hidden_dims)
             + [1]
         )

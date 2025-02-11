@@ -3,83 +3,88 @@ from typing import List
 
 import gymnasium as gym
 import torch
+import numpy as np
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class StandardReplayBuffer:
-    def __init__(self, env_params, capacity=512, sample_func=None):
+class EpisodicBuffer:
+    def __init__(self, env_params, capacity=int(1e4), max_timesteps=300, sample_func=None):
+        """Create a replay buffer.
+        Args:
+            env_params (dict): Environment parameters.
+            capacity (int): The maximum number of episodes that the buffer can store.
+            max_timesteps (int): The maximum number of timesteps that an episode can last.
+            sample_func (function): Function to sample from the buffer.
+        """
         self.env_params = env_params
-        self.capacity = capacity
         self.size = 0
-        self.sample_func = sample_func
+        self.max_timesteps = max_timesteps
+        self.capacity = capacity
+        self.sample_func = sample_func # In this case, HER sampler
         self.buffer = {
-            "observation": torch.empty([capacity, env_params["obs_dim"]]),
-            "action": torch.empty([capacity, env_params["action_dim"]]),
-            "reward": torch.empty([capacity, 1]),
-            "done": torch.empty([capacity, 1]),
-            "goal": torch.empty([capacity, env_params["goal_dim"]]),
-            "achieved_goal": torch.empty([capacity, env_params["goal_dim"]]),
-            "new_observation": torch.empty([capacity, env_params["obs_dim"]]),
+            "observation": torch.empty([capacity, self.max_timesteps, env_params["obs_dim"]]),
+            "action": torch.empty([capacity, self.max_timesteps, env_params["action_dim"]]),
+            "reward": torch.empty([capacity, self.max_timesteps, 1]),
+            "done": torch.empty([capacity,self.max_timesteps, 1]),
+            "new_observation": torch.empty([capacity, self.max_timesteps, env_params["obs_dim"]]),
+            "goal": torch.empty([capacity, self.max_timesteps, env_params["goal_dim"]]),
+            "achieved_goal": torch.empty([capacity, self.max_timesteps, env_params["goal_dim"]]),
+            "achieved_goal_next": torch.empty([capacity, self.max_timesteps, env_params["goal_dim"]]),
+            "episode_len": torch.empty([capacity, 1]),
         }
 
-    def populate(self, env: gym.Env, start_steps: int = 1000) -> None:
-        observation = env.reset()[0]
-        observation = torch.as_tensor(observation, dtype=torch.float32).to(
-            device
-        )  # buffer expects tensor
-        for i in range(start_steps):
-            action = env.action_space.sample()
-            action = torch.as_tensor(action, dtype=torch.float32).to(
-                device
-            )  # buffer expects tensor
-            # actions right np.array([4., 0.]), left np.array([-4., 0.]), up np.array([0., 4.]), down np.array([0., -4.])
-            new_observation, reward, terminated, truncated, _ = env.step(
-                action.cpu().numpy()
-            )
-            done = terminated or truncated
-            new_observation = torch.as_tensor(
-                new_observation, dtype=torch.float32
-            ).to(
-                device
-            )  # buffer expects tensor
-            self.store(observation, action, reward, done, new_observation)
-            observation = new_observation
-            if terminated or truncated:
-                observation = env.reset()[0]
-                observation = torch.as_tensor(
-                    observation, dtype=torch.float32
-                ).to(
-                    device
-                )  # buffer expects tensor
+    def store_episode(self, episode_batch) -> None:
+        mb_obs, mb_actions, mb_reward, mb_done, mb_next_obs, mb_g, mb_ag, mb_ag_next = episode_batch
+        ep_len = mb_actions.shape[0]
+        idxs = self._get_storage_idx()
+        # store the informations
+        self.buffer['observation'][idxs, :ep_len] = mb_obs
+        self.buffer['action'][idxs, :ep_len] = mb_actions
+        self.buffer["reward"][idxs, :ep_len] = mb_reward
+        self.buffer["done"][idxs, :ep_len] = mb_done
+        self.buffer['new_observation'][idxs, :ep_len] = mb_next_obs
+        self.buffer['goal'][idxs, :ep_len] = mb_g
+        self.buffer['achieved_goal'][idxs, :ep_len] = mb_ag
+        self.buffer['achieved_goal_next'][idxs, :ep_len] = mb_ag_next
+        self.buffer['episode_len'][idxs] = ep_len
 
-    def store(
-        self,
-        observation: torch.Tensor,
-        action: torch.Tensor,
-        reward: float,
-        done: bool,
-        new_observation: torch.Tensor,
-        goal: torch.Tensor,
-    ) -> None:
-        index = self.size % self.capacity
-        self.buffer["observation"][index] = observation
-        self.buffer["action"][index] = action
-        self.buffer["reward"][index] = reward
-        self.buffer["done"][index] = done
-        self.buffer["goal"][index] = observation
-        self.buffer["new_observation"][index] = new_observation
-        self.size += 1
 
-    def sample(self, batch_size=32) -> List[torch.Tensor]:
-        max_batch_index = min(self.size, self.capacity - 1)
+
+    def _get_storage_idx(self, inc=1):
+        """Get the storage index.
+        If the replay buffer is not full, return the next available index.
+        If the replay buffer is full, replace old trajectories in a random way.
+        """
+        inc = inc or 1
+        if self.size+inc <= self.capacity:
+            idx = np.arange(self.size, self.size+inc)
+        elif self.size < self.capacity:
+            overflow = inc - (self.capacity - self.size)
+            idx_a = np.arange(self.size, self.capacity)
+            idx_b = np.random.randint(0, self.size, overflow)
+            idx = np.concatenate([idx_a, idx_b])
+        else:
+            idx = np.random.randint(0, self.capacity, inc)
+        self.size = min(self.capacity, self.size+inc)
+        if inc == 1:
+            idx = idx[0]
+        return idx
+
+
+    def sample(self, num_episodes=32) -> List[torch.Tensor]:
+        """Sample a batch of episodes from the buffer.
+        Args:
+            num_episodes (int): The number of episodes to sample.
+        Returns:
+            List[torch.Tensor]: A list of tensors containing the sampled episodes.
+        """
         if self.sample_func is not None:
             temp_buffer = {}
             for key in self.buffer.keys():
-                temp_buffer[key] = self.buffer[key][:max_batch_index]
-            temp_buffer['ag_next'] = temp_buffer["goal"][1:]
-            return self.sample_func(temp_buffer, batch_size)
-        sampled_indices = random.sample(range(max_batch_index), batch_size)
+                temp_buffer[key] = self.buffer[key][:self.size]
+            return self.sample_func(temp_buffer, num_episodes)
+        sampled_indices = random.sample(range(self.size), num_episodes)
         observations = self.buffer["observation"][sampled_indices].to(device)
         actions = self.buffer["action"][sampled_indices].to(device)
         rewards = self.buffer["reward"][sampled_indices].to(device)
@@ -87,5 +92,9 @@ class StandardReplayBuffer:
         new_observations = self.buffer["new_observation"][sampled_indices].to(
             device
         )
-        return [observations, actions, rewards, dones, new_observations]
+        goal = self.buffer['goal'][sampled_indices].to(device)
+        achieved_goal = self.buffer['achieved_goal'][sampled_indices].to(device)
+        next_achieved_goal = self.buffer['achieved_goal'][sampled_indices, 1:, :].to(device)
+        n_steps = self.buffer['episode_len'][sampled_indices].to(device)
+        return [observations, actions, rewards, dones, new_observations, goal, achieved_goal, next_achieved_goal, n_steps]
 
