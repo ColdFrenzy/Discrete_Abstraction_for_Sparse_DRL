@@ -33,12 +33,8 @@ RUN pip install -r  /opt/requirements.txt
 
 RUN echo "set -g mouse on" > /$HOME/.tmux.conf 
 
-#RUN cd /opt && \
-#    git clone https://github.com/Alee08/multi-agent-rl-rm.git && \
-#    cd multi-agent-rl-rm && \
-#    pip install -e .
 
-WORKDIR /opt/multi-agent-rl-rm
+WORKDIR /opt/dadrl
 
 CMD /usr/bin/tmux
 

@@ -2,5 +2,5 @@
 
 UPAR="--build-arg UID=`id -u` --build-arg GID=`id -g`"
 
-docker build $UPAR -t marl -f Dockerfile .
+docker build $UPAR -t dadrl -f Dockerfile .
 
