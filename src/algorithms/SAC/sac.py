@@ -44,6 +44,7 @@ class SAC:
         alpha_initial=4,
         alpha_final=0.05,
         batch_size=128,
+        num_batches=40,
         gamma=0.1,
         max_episodes=200,
         max_ep_alpha_decay=200
@@ -64,6 +65,7 @@ class SAC:
             alpha_initial (float, optional): Initial value of the entropy coefficient. Defaults to 4.
             alpha_final (float, optional): Final value of the entropy coefficient. Defaults to 0.05.
             batch_size (int, optional): Size of the mini-batch for updates. Defaults to 128.
+            num_batches (int, optional): Number of mini-batches per update. Defaults to 40.
             gamma (float, optional): Discount factor for future rewards. Defaults to 0.1.
             max_episodes (int, optional): Maximum number of episodes for training. Defaults to 200.
         """
@@ -82,8 +84,10 @@ class SAC:
         self.alpha = alpha_initial
         self.batch_size = batch_size
         self.gamma = gamma
+        self.num_batches = num_batches
         self.max_episodes = max_episodes
         self.max_ep_alpha_decay = max_ep_alpha_decay
+        self.total_win = 0
 
         # Alpha discounting
         self.alpha_update = ExponentialDiscountScheduler(
@@ -147,19 +151,30 @@ class SAC:
         for _ in range(self.batch_size):
             observation = self.env.reset()[0]
             self.rollout_episode(observation)      
-  
+        # start to collect samples
+
         with tqdm(total=self.max_episodes) as pbar:
             for i in range(self.max_episodes):
                 # reset the environment
                 observation = self.env.reset()[0]
                 # start to collect samples
                 info = self.rollout_episode(observation)
-                value_loss1_value, value_loss2_value , policy_loss_value, entropy_loss_value = self.learning_step()
+                if info["log"] == "GOAL REACHED":
+                    self.total_win += 1
+                value_loss_1_mean, value_loss_2_mean, policy_loss_mean, entropy_loss_mean = [], [], [], []
+                for _ in range(self.num_batches):
+                    value_loss1_value, value_loss2_value , policy_loss_value, entropy_loss_value = self.learning_step()
+                    value_loss_1_mean.append(value_loss1_value)
+                    value_loss_2_mean.append(value_loss2_value)
+                    policy_loss_mean.append(policy_loss_value)
+                    entropy_loss_mean.append(entropy_loss_value)
+
                 mean_losses = {
-                    "value_loss1": value_loss1_value,
-                    "value_loss2": value_loss2_value,
-                    "policy_loss": policy_loss_value,
-                    "entropy_loss": entropy_loss_value,
+                    "value_loss1": np.mean(value_loss_1_mean),
+                    "value_loss2": np.mean(value_loss_2_mean),
+                    "policy_loss": np.mean(policy_loss_mean),
+                    "entropy_loss": np.mean(entropy_loss_mean),
+                    "total_win": self.total_win,
                 }
                 self.episode_update(pbar, info, mean_losses)
                 if self.ep % 1000 == 0:
@@ -183,7 +198,7 @@ class SAC:
                     device
                 )
                 achieved_goal = observation.clone()
-                goal = torch.tensor(self.env.goal)
+                goal = torch.tensor(self.env.goal).to(device)
                 obs_goal = torch.cat((observation, goal), dim=0)
                 action = self.select_action(obs_goal).to(device)
                 new_observation, reward, terminated, truncated, info = self.env.step(
@@ -232,13 +247,13 @@ class SAC:
 
     def learning_step(self) -> bool:
         # Sampling of the minibatch
-        batch = self.memory.sample(num_episodes=self.batch_size)
+        batch = self.memory.sample(batch_size=self.batch_size)
         # Learning step
-        if self.num_steps % self.value_update_freq == 0:
+        if self.ep % self.value_update_freq == 0:
             value_loss1_value, value_loss2_value = self.value_learning_step(batch)
-        if self.num_steps % self.policy_update_freq == 0:
+        if self.ep % self.policy_update_freq == 0:
             policy_loss_value, entropy_loss_value = self.policy_learning_step(batch)
-        if self.num_steps % self.target_update_freq == 0:
+        if self.ep % self.target_update_freq == 0:
             self.update_target_networks()
         
         return value_loss1_value, value_loss2_value , policy_loss_value, entropy_loss_value
@@ -246,8 +261,8 @@ class SAC:
     def value_learning_step(self, batch):
         observations= batch["observation"].squeeze(1)
         actions = batch["action"].squeeze(1)
-        rewards = batch["reward"].squeeze(1)
-        dones = batch["done"].squeeze(1)
+        rewards = batch["reward"].squeeze(1).to(device)
+        dones = batch["done"].squeeze(1).to(device)
         new_observations = batch["new_observation"].squeeze(1)
         goal = batch["goal"].squeeze(1)
         achieved_goal = batch["achieved_goal"].squeeze(1)
@@ -382,15 +397,17 @@ class SAC:
         with tqdm(total=num_ep) as pbar:
             for i in range(num_ep):
                 observation = torch.FloatTensor(env.reset()[0])
-
                 terminated = False
                 truncated = False
                 total_reward = 0
 
                 while not terminated and not truncated:
                     with torch.no_grad():
+                        goal = torch.FloatTensor(env.goal)
+                        obs_goal = torch.cat((observation, goal), dim=0)
+ 
                         action, _ = self.actor(
-                            observation, deterministic=True, with_logprob=False
+                            obs_goal, deterministic=True, with_logprob=False
                         )
                     observation, reward, terminated, truncated, info = (
                         env.step(action.cpu().numpy())
@@ -411,9 +428,9 @@ class SAC:
 
         return mean_reward
 
-    def save(self):
+    def save(self, name):
         here = WEIGHTS_DIR
-        path = os.path.join(here, self.agent_name, self.name)
+        path = os.path.join(here, name, self.agent_name, self.name)
 
         os.makedirs(path, exist_ok=True)
 
@@ -430,9 +447,9 @@ class SAC:
         )
         print("MODELS SAVED!")
 
-    def load(self, ep=10000):
-        here = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(here, "models", self.agent_name, self.name)
+    def load(self, name, ep=10000):
+        here = WEIGHTS_DIR
+        path = os.path.join(here, self.agent_name, self.name)
 
         self.actor.load_state_dict(
             torch.load(

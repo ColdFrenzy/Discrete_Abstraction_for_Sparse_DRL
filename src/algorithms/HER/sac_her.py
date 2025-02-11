@@ -36,6 +36,7 @@ class SAC_HER(SAC):
         alpha_initial=4,
         alpha_final=0.05,
         batch_size=128,
+        num_batches=40,
         gamma=0.1,
         max_episodes=200,
         max_ep_alpha_decay=200
@@ -55,6 +56,7 @@ class SAC_HER(SAC):
             alpha_initial=alpha_initial,
             alpha_final=alpha_final,
             batch_size=batch_size,
+            num_batches=num_batches,
             gamma=gamma,
             max_episodes=max_episodes,
             max_ep_alpha_decay=max_ep_alpha_decay
@@ -67,47 +69,6 @@ class SAC_HER(SAC):
         # create the normalizer
         # self.o_norm = normalizer(size=env_params['obs'], default_clip_range=self.args.clip_range)
         # self.g_norm = normalizer(size=env_params['goal'], default_clip_range=self.args.clip_range)
-
-    def train(self):
-        """
-        train the network
-        """
-        self.ep = 1
-        self.training = True
-        agent_name = self.agent_name
-
-        # Populating the experience replay memory
-        for _ in range(self.batch_size):
-            observation = self.env.reset()[0]
-            self.rollout_episode(observation) 
-
-        # start to collect samples
-        with tqdm(total=self.max_episodes) as pbar:
-            for i in range(self.max_episodes):
-                # reset the environment
-                observation = self.env.reset()[0]
-                # start to collect samples
-                info = self.rollout_episode(observation)
-                # train the agent at the end of the episode
-                value_loss1_value, value_loss2_value , policy_loss_value, entropy_loss_value = self.learning_step()
-                mean_losses = {
-                    "value_loss1": value_loss1_value,
-                    "value_loss2": value_loss2_value,
-                    "policy_loss": policy_loss_value,
-                    "entropy_loss": entropy_loss_value,
-                }
-                self.episode_update(pbar, info, mean_losses)
-            if self.ep % 1000 == 0:
-                self.env.render_episode(self)
-                self.env.save_episode(self.ep, name=f"uav_{self.agent_name}_cont")
-                self.save()
-        # start to do the evaluation
-        # success_rate = self._eval_agent()
-        # if MPI.COMM_WORLD.Get_rank() == 0:
-        #     print('[{}] epoch is: {}, eval success rate is: {:.3f}'.format(datetime.now(), epoch, success_rate))
-        #     torch.save([self.o_norm.mean, self.o_norm.std, self.g_norm.mean, self.g_norm.std, self.actor_network.state_dict()], \
-        #                 self.model_path + '/model.pt')
-    
 
     # do the evaluation
     def _eval_agent(self):

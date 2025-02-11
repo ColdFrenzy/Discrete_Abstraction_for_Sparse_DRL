@@ -72,10 +72,10 @@ class EpisodicBuffer:
         return idx
 
 
-    def sample(self, num_episodes=32) -> List[torch.Tensor]:
+    def sample(self, batch_size=32) -> List[torch.Tensor]:
         """Sample a batch of episodes from the buffer.
         Args:
-            num_episodes (int): The number of episodes to sample.
+            batch_size (int): The number of episodes to sample.
         Returns:
             List[torch.Tensor]: A list of tensors containing the sampled episodes.
         """
@@ -83,18 +83,24 @@ class EpisodicBuffer:
             temp_buffer = {}
             for key in self.buffer.keys():
                 temp_buffer[key] = self.buffer[key][:self.size]
-            return self.sample_func(temp_buffer, num_episodes)
-        sampled_indices = random.sample(range(self.size), num_episodes)
-        observations = self.buffer["observation"][sampled_indices].to(device)
-        actions = self.buffer["action"][sampled_indices].to(device)
-        rewards = self.buffer["reward"][sampled_indices].to(device)
-        dones = self.buffer["done"][sampled_indices].to(device)
-        new_observations = self.buffer["new_observation"][sampled_indices].to(
+            return self.sample_func(temp_buffer, batch_size)
+        transitions = {}
+        sample_episodes = random.sample(range(self.size), batch_size)
+        transition_in_episodes = []
+        for ep in sample_episodes:
+            transition_in_episodes.append(random.randint(0, self.buffer['episode_len'][ep].item()-1))
+        transition_in_episodes = torch.tensor(transition_in_episodes)
+
+        transitions["observation"] = self.buffer["observation"][sample_episodes, transition_in_episodes, :].to(device)
+        transitions["action"] = self.buffer["action"][sample_episodes, transition_in_episodes, :].to(device)
+        transitions["reward"] = self.buffer["reward"][sample_episodes, transition_in_episodes, :].to(device)
+        transitions["done"] = self.buffer["done"][sample_episodes, transition_in_episodes, :].to(device)
+        transitions["new_observation"] = self.buffer["new_observation"][sample_episodes, transition_in_episodes, :].to(
             device
         )
-        goal = self.buffer['goal'][sampled_indices].to(device)
-        achieved_goal = self.buffer['achieved_goal'][sampled_indices].to(device)
-        next_achieved_goal = self.buffer['achieved_goal'][sampled_indices, 1:, :].to(device)
-        n_steps = self.buffer['episode_len'][sampled_indices].to(device)
-        return [observations, actions, rewards, dones, new_observations, goal, achieved_goal, next_achieved_goal, n_steps]
+        transitions["goal"] = self.buffer['goal'][sample_episodes, transition_in_episodes, :].to(device)
+        transitions["achieved_goal"] = self.buffer['achieved_goal'][sample_episodes, transition_in_episodes, :].to(device)
+        transitions["achieved_goal_next"] = self.buffer['achieved_goal_next'][sample_episodes, transition_in_episodes, :].to(device)
+        n_steps = self.buffer['episode_len'][sample_episodes].to(device)
+        return transitions
 

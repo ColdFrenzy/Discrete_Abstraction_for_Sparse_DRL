@@ -2,6 +2,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 import wandb
+import os
 import numpy as np
 
 from src.environments.single_agent.cont_uav_env import ContinuousUAV
@@ -13,10 +14,11 @@ from src.environments.maps import MAPS_OBST
 from src.utils.heatmap import generate_heatmaps_numbers
 from src.utils.paths import QTABLE_DIR
 
-
-env_reward_type = RewardType.model # or model, or sparse
+os.environ["IS_RENDER"] = "False"
+env_reward_type = RewardType.sparse # or model, or sparse
 is_slippery = False
 map_size = 10
+MAX_EPISODE_STEPS = 400
 OBST = True
 if OBST:
     map_name = MAPS_OBST[map_size]
@@ -25,7 +27,7 @@ else:
 
 
 
-training = False
+training = True
 compute_qtable = False
 
 transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
@@ -43,11 +45,11 @@ if env_reward_type == RewardType.model:
     generate_heatmaps_numbers(qtable)
 
 
-env = ContinuousUAV(map_name =  map_name, agent_name="a1", size = map_size, OBST=OBST, agent_initial_pos = [0.5, map_size-0.5], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery)
-agent = SAC(name = experiment_name,agent_name="a1", env = env, max_episodes = NUM_EPISODES_CONT)
+env = ContinuousUAV(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = [0.5, map_size-0.5], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False)
+agent = SAC(name = experiment_name,agent_name="a1", env = env, max_episodes = NUM_EPISODES_CONT, alpha_initial=0.4, alpha_final=0.01, gamma=0.1, max_ep_alpha_decay=2000)
 
 if training:
-    wandb.init(project="drl-cont-uav", group=experiment_name)
+    wandb.init(project="drl-cont-uav", group=experiment_name, mode="disabled")
     agent.train()
     env.save_episode(1)
     env.render()
