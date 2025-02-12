@@ -45,7 +45,7 @@ class ContinuousUAV(Env):
         self,
         map_name: str = "6x6",
         agent_name: str = "a1",
-        size: int =  10,
+        size: int = 10,
         agent_initial_pos: Tuple[float, float] = (2.5, 4.5),
         OBST: bool = False,
         reward_type: RewardType = RewardType.dense,
@@ -60,7 +60,9 @@ class ContinuousUAV(Env):
         self.reward_type = reward_type
         self.is_slippery = is_slippery
         self.is_rendered = is_rendered
-        self.transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
+        self.transition_mode = (
+            TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
+        )
 
         # Grid Topology
         self.holes, self.goals = parse_map_emoji(self.map_name)
@@ -96,36 +98,35 @@ class ContinuousUAV(Env):
         if self.reward_type == RewardType.model:
             self.values = self.load_values()
 
-    def reward_function(self, obs: np.ndarray, desired_goal: np.ndarray = None, info: dict = None) -> Tuple[float, bool]:
+    def reward_function(
+        self, obs: np.ndarray, desired_goal: np.ndarray = None, info: dict = None
+    ) -> Tuple[float, bool]:
         terminated = False
         truncated = False
         reward = 0
         log = None
         if desired_goal is None:
             desired_goal = self.goal
-        # Check for wall 
+        # Check for wall
         if obs[0] <= 0 or obs[0] >= self.size:
             obs[0] = np.clip(obs[0], 0.05, self.size - 0.05)
-            reward = -1
+            reward = -10
         if obs[1] <= 0 or obs[1] >= self.size:
             obs[1] = np.clip(obs[1], 0.05, self.size - 0.05)
-            reward = -1
+            reward = -10
 
         if self.reward_type == RewardType.dense:
             goal_distance = np.linalg.norm(obs - self.grid2frame(self.goal))
             reward += -goal_distance
         elif self.reward_type == RewardType.model:
             i, j = self.frame2matrix(obs)
-            # if any(self.prev_cell != np.array([i, j])):
-            #     self.prev_cell = np.array([i, j])
-            reward += self.values[i, j] # / np.max(self.values)
-            
+            reward += self.values[i, j]
 
         # Check for successful termination
         if self.is_inside_cell(obs, desired_goal):
             log = "GOAL REACHED"
-            if self.reward_type != RewardType.model:
-                reward += 10
+            reward += 1000
+            self.goal_reached = True
             self.old_goal = self.goal
             self.goal_idx += 1
             if self.goal_idx == self.num_goals:
@@ -138,45 +139,54 @@ class ContinuousUAV(Env):
         # Check for maximum steps termination
         if self.num_steps >= self._max_episode_steps:
             truncated = True
-            log = "MAX STEPS REACHED"
+            # reward = -1000
+            self.max_steps_reached = True
+            log = ""
 
         # Check for failure termination
         for hole in self.holes:
             if self.is_inside_cell(obs, hole):
                 truncated = True
-                if self.reward_type != RewardType.model:
-                    reward = -10
-                log = "HOLE"
+                # reward = -1000
+                self.fell_in_hole = True
+                log = ""
                 break
 
         return obs, reward, terminated, truncated, log
 
-    def reward_function_batch(self, obs: torch.tensor, desired_goal: torch.tensor, info: dict = None) -> Tuple[float, bool]:
+    def reward_function_batch(
+        self, obs: torch.tensor, desired_goal: torch.tensor, info: dict = None
+    ) -> Tuple[float, bool]:
         # obs size [batch_size, 2]
         reward = []
-        log = None
         # Check for wall 
         for i in range(obs.size(0)):
             step_reward = 0
             if obs[i, 0] <= 0 or obs[i, 0] >= self.size:
                 obs[i, 0] = np.clip(obs[i, 0], 0.05, self.size - 0.05)
-                step_reward = -1
+                # step_reward += -10
             if obs[i, 1] <= 0 or obs[i, 1] >= self.size:
                 obs[i, 1] = np.clip(obs[i, 1], 0.05, self.size - 0.05)
-                step_reward = -1
+                # step_reward += -10
+                
+            if self.reward_type == RewardType.model:
+                k, l = self.frame2matrix(obs[i])
+                step_reward += float(self.values[k, l])
             
             # check for goal
             if self.is_inside_cell(obs[i], desired_goal[i]):
-                log = "GOAL REACHED"
-                step_reward = 10
+                step_reward += 5000
             
             # Check for failure termination
             for hole in self.holes:
                 if self.is_inside_cell(obs[i], hole):
-                    step_reward = -10
-                    log = "HOLE"
+                    step_reward = -100
                     break
             reward.append(step_reward)
+            
+        if len(obs) == self._max_episode_steps:
+            reward.append(-1000)
+            
         reward = torch.tensor(reward).unsqueeze(1)
 
         return reward
@@ -197,8 +207,8 @@ class ContinuousUAV(Env):
             new_x += np.random.normal(0, 0.01)
             new_y += np.random.normal(0, 0.01)
 
-        self.observation, self.reward, terminated, truncated, log = self.reward_function(
-            np.array([new_x, new_y])
+        self.observation, self.reward, terminated, truncated, log = (
+            self.reward_function(np.array([new_x, new_y]))
         )
 
         self.trajectory.append(self.observation)
@@ -212,12 +222,10 @@ class ContinuousUAV(Env):
             {"log": log},
         )
 
-    def reset(self) -> Tuple[np.ndarray, dict]:
+    def reset(self, seed=SEED) -> Tuple[np.ndarray, dict]:
         super().reset(seed=SEED)
         self.num_steps = 0
-        self.observation = np.array(
-            self.agent_initial_pos
-        )  
+        self.observation = np.array(self.agent_initial_pos)
         self.start_obs = self.observation
         self.trajectory = []
         self.frames = []
@@ -244,7 +252,10 @@ class ContinuousUAV(Env):
         """
         Load the Q-table from the file system.
         """
-        qtable = np.load(f"{QTABLE_DIR}/{self.transition_mode.name}/qtable_{self.size}_obstacles_{self.OBST}.npz")[self.agent_name]
+        qtable: np.ndarray = np.load(
+            f"{QTABLE_DIR}/{self.transition_mode.name}/single_agent/qtable_{self.size}_obstacles_{self.OBST}.npz"
+        )[self.agent_name]
+        qtable = qtable.astype(float)
         return qtable
 
     def frame2matrix(self, frame_pos: np.ndarray) -> np.ndarray:
@@ -311,12 +322,8 @@ class ContinuousUAV(Env):
         # Draw the holes
         for hole in self.holes:
             hole_x, hole_y = hole
-            hole_x = (
-                hole_x * self._cell_size
-            )  # - self.hole_img.get_width() // 2
-            hole_y = (
-                hole_y * self._cell_size
-            )  # - self.hole_img.get_height() // 2
+            hole_x = hole_x * self._cell_size  # - self.hole_img.get_width() // 2
+            hole_y = hole_y * self._cell_size  # - self.hole_img.get_height() // 2
             if self.is_inside_cell(self.observation, hole):
                 self.screen.blit(self.cracked_hole_img, (hole_x, hole_y))
             else:
@@ -340,7 +347,7 @@ class ContinuousUAV(Env):
         x, y = self.frame2grid(self.observation)
         agent_x = x * self._cell_size - self.agent_img.get_width() // 2
         agent_y = y * self._cell_size - self.agent_img.get_height() // 2
-        self.screen.blit(self.agent_img, (agent_x, agent_y)) 
+        self.screen.blit(self.agent_img, (agent_x, agent_y))
 
         # Draw the trajectory
         if self.trajectory:
@@ -348,14 +355,11 @@ class ContinuousUAV(Env):
                 traj_x, traj_y = self.frame2grid(point)
                 traj_x = traj_x * self._cell_size
                 traj_y = traj_y * self._cell_size
-                pygame.draw.circle(
-                    self.screen, (255, 0, 0), (traj_x, traj_y), 5
-                )
+                pygame.draw.circle(self.screen, (255, 0, 0), (traj_x, traj_y), 5)
 
         reward_text = f"Reward: {self.reward}"
         text_surface = self.font.render(reward_text, True, (0, 0, 0))  # White color
         self.screen.blit(text_surface, (10, 10))  # Display text at top-left corner
-
 
         if not self.is_display:
             image_data = pygame.surfarray.array3d(self.screen)
@@ -363,30 +367,33 @@ class ContinuousUAV(Env):
             image_data = pygame.surfarray.array3d(pygame.display.get_surface())
         image_data = image_data.transpose([1, 0, 2])
         self.frames.append(image_data)
-        
+
         if self.is_display:
             pygame.event.pump()
             pygame.display.update()
             self.clock.tick(60)
-        
+
     def render_episode(self, agent: "RLAgent", max_steps: int = None):
         """
         Renders an episode with the given agents.
         """
-        self.observations,_ = self.reset()
+        self.observations, _ = self.reset()
         self.render()
         if max_steps is None:
             max_steps = self._max_episode_steps
         for step in range(max_steps):
             with torch.no_grad():
                 actions, _ = agent.actor(
-                            torch.tensor(self.observations,dtype=torch.float32), deterministic=True, with_logprob=False
-                        )
-            self.observations,  self.reward, terminated, truncated, _ = self.step(actions.cpu().numpy())
+                    torch.tensor(self.observations, dtype=torch.float32),
+                    deterministic=True,
+                    with_logprob=False,
+                )
+            self.observations, self.reward, terminated, truncated, _ = self.step(
+                actions.cpu().numpy()
+            )
             self.render()
             if truncated:
                 break
-
 
     def save_episode(self, episode, name="uav_cont"):
         # Creare la cartella "episodes" se non esiste
@@ -394,7 +401,6 @@ class ContinuousUAV(Env):
         episodes_dir = EPISODES_DIR
         if not os.path.exists(episodes_dir):
             os.makedirs(episodes_dir, exist_ok=True)
-
 
         if self.frames:
             # Salva in formato AVI senza convertire i frames in BGR, poiché pygame li fornisce in RGB
@@ -438,17 +444,11 @@ class ContinuousUAV(Env):
         self.font = pygame.font.SysFont("Arial", 25)  # Crea un oggetto font
 
         agent_img_path = IMAGE_DIR / "drone.png"
-        self.agent_img = scale(
-            load(agent_img_path), (self._cell_size, self._cell_size)
-        )
+        self.agent_img = scale(load(agent_img_path), (self._cell_size, self._cell_size))
         ice_img_path = IMAGE_DIR / "white.png"
-        self.ice_img = scale(
-            load(ice_img_path), (self._cell_size, self._cell_size)
-        )
+        self.ice_img = scale(load(ice_img_path), (self._cell_size, self._cell_size))
         hole_img_path = IMAGE_DIR / "red.png"
-        self.hole_img = scale(
-            load(hole_img_path), (self._cell_size, self._cell_size)
-        )
+        self.hole_img = scale(load(hole_img_path), (self._cell_size, self._cell_size))
         cracked_hole_img_path = IMAGE_DIR / "red.png"
         self.cracked_hole_img = scale(
             load(cracked_hole_img_path), (self._cell_size, self._cell_size)
@@ -463,6 +463,3 @@ class ContinuousUAV(Env):
         Quit the Pygame environment.
         """
         pygame.quit()
-
-
-

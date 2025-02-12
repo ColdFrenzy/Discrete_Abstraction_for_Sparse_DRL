@@ -10,12 +10,12 @@ from tqdm import tqdm
 
 import wandb
 from src.utils.paths import WEIGHTS_DIR
-from src.algorithms.SAC.buffer import EpisodicBuffer
+from algorithms.SAC.buffer import EpisodicBuffer
 from src.algorithms.SAC.networks import Actor, Critic, SquashedGaussianActor
 from src.utils.scheduler import (
     ExponentialDiscountScheduler,
     LinearDiscountScheduler,
-    SigmoidDiscountScheduler
+    SigmoidDiscountScheduler,
 )
 from src.utils.plot import save_reward_plots, save_steps_plot
 
@@ -38,15 +38,15 @@ class SAC:
         polyak=0.995,
         pi_lr=0.0005,
         q_lr=0.0005,
-        target_update_freq=2,
-        value_update_freq=1,
-        policy_update_freq=1,
+        ep_update_freq=1,
+        gradient_steps=1,
         alpha_initial=4,
         alpha_final=0.05,
         batch_size=128,
         gamma=0.1,
         max_episodes=200,
-        max_ep_alpha_decay=200
+        max_ep_alpha_decay=200,
+        buffer_capacity=512,
     ):
         """
         Initializes the Soft Actor-Critic (SAC) algorithm.
@@ -76,9 +76,8 @@ class SAC:
         self.polyak = polyak
         self.pi_lr = pi_lr
         self.q_lr = q_lr
-        self.target_update_freq = target_update_freq
-        self.value_update_freq = value_update_freq
-        self.policy_update_freq = policy_update_freq
+        self.ep_update_freq = ep_update_freq
+        self.gradient_steps = gradient_steps
         self.alpha = alpha_initial
         self.batch_size = batch_size
         self.gamma = gamma
@@ -86,12 +85,16 @@ class SAC:
         self.max_ep_alpha_decay = max_ep_alpha_decay
 
         # Alpha discounting
-        self.alpha_update = ExponentialDiscountScheduler(
+        self.alpha_update = SigmoidDiscountScheduler(
             alpha_initial, alpha_final, self.max_ep_alpha_decay
         )
 
         # env params for networks and buffer
-        observation = env.reset()[0]
+        observation = torch.tensor(env.reset()[0])
+        if torch.isnan(observation).any():
+            print("obs:", observation)
+            raise ValueError("NaN values found in obs reset")
+        
         # observation and goal has the same shape so obs_dim is doubled
         self.env_params = {
             "obs_dim": observation.shape[0],
@@ -103,21 +106,15 @@ class SAC:
         }
 
         # Networks
-        self.actor: SquashedGaussianActor = SquashedGaussianActor(
-            self.env_params
-        ).to(device)
+        self.actor: SquashedGaussianActor = SquashedGaussianActor(self.env_params).to(
+            device
+        )
         self.critic1: Critic = Critic(self.env_params).to(device)
         self.critic2: Critic = Critic(self.env_params).to(device)
 
-        self.policy_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=pi_lr
-        )
-        self.value_optimizer1 = torch.optim.Adam(
-            self.critic1.parameters(), lr=q_lr
-        )
-        self.value_optimizer2 = torch.optim.Adam(
-            self.critic2.parameters(), lr=q_lr
-        )
+        self.policy_optimizer = torch.optim.Adam(self.actor.parameters(), lr=pi_lr)
+        self.value_optimizer1 = torch.optim.Adam(self.critic1.parameters(), lr=q_lr)
+        self.value_optimizer2 = torch.optim.Adam(self.critic2.parameters(), lr=q_lr)
         self.value_loss_fn = nn.MSELoss()
 
         self.target_actor: Actor = deepcopy(self.actor).to(device)
@@ -134,8 +131,7 @@ class SAC:
             param.requires_grad = False
 
         # Experience Replay Buffer
-        self.memory = EpisodicBuffer(self.env_params, max_timesteps=self.env_params["max_steps"])
-        # self.start_steps = batch_size
+        self.memory = EpisodicBuffer(self.env_params, buffer_capacity)
 
     def train(self):
         # Life stats
@@ -146,15 +142,21 @@ class SAC:
         # Populating the experience replay memory
         for _ in range(self.batch_size):
             observation = self.env.reset()[0]
-            self.rollout_episode(observation)      
-  
+            self.rollout_episode(observation)
+
         with tqdm(total=self.max_episodes) as pbar:
             for i in range(self.max_episodes):
                 # reset the environment
                 observation = self.env.reset()[0]
                 # start to collect samples
                 info = self.rollout_episode(observation)
-                value_loss1_value, value_loss2_value , policy_loss_value, entropy_loss_value = self.learning_step()
+                if i % self.ep_update_freq == 0:
+                    (
+                        value_loss1_value,
+                        value_loss2_value,
+                        policy_loss_value,
+                        entropy_loss_value,
+                    ) = self.learning_step()
                 mean_losses = {
                     "value_loss1": value_loss1_value,
                     "value_loss2": value_loss2_value,
@@ -163,8 +165,6 @@ class SAC:
                 }
                 self.episode_update(pbar, info, mean_losses)
                 if self.ep % 1000 == 0:
-                    self.env.render_episode(self)
-                    self.env.save_episode(self.ep, name=f"uav_{self.agent_name}_cont")
                     self.save()
 
     def rollout_episode(self, observation: np.ndarray) -> tuple:
@@ -175,7 +175,16 @@ class SAC:
         numpy array as input.
         """
         done = False
-        ep_obs, ep_actions, ep_rewards, ep_done, ep_next_obs, ep_g, ep_ag, ep_ag_next  = [], [], [], [], [], [], [], []
+        (
+            ep_obs,
+            ep_actions,
+            ep_rewards,
+            ep_done,
+            ep_next_obs,
+            ep_g,
+            ep_ag,
+            ep_ag_next,
+        ) = ([], [], [], [], [], [], [], [])
         self.num_steps = 0
         with torch.no_grad():
             while not done:
@@ -189,7 +198,8 @@ class SAC:
                 new_observation, reward, terminated, truncated, info = self.env.step(
                     action.cpu().numpy()
                 )
-                if (truncated): 
+                
+                if truncated:
                     self.num_steps = self.env._max_episode_steps
                     done = truncated
                     continue
@@ -206,8 +216,7 @@ class SAC:
                 ep_next_obs.append(new_observation)
                 ep_ag_next.append(new_observation.clone())
                 self.num_steps += 1
-                # self.memory.store(observation, action, reward, done, new_observation)
-        
+
         ep_obs = torch.stack(ep_obs)
         ep_actions = torch.stack(ep_actions)
         ep_rewards = torch.stack(ep_rewards).unsqueeze(1)
@@ -216,8 +225,27 @@ class SAC:
         ep_g = torch.stack(ep_g)
         ep_ag = torch.stack(ep_ag)
         ep_ag_next = torch.stack(ep_ag_next)
-        assert ep_obs.shape[0] == ep_actions.shape[0] == ep_rewards.shape[0] == ep_done.shape[0] == ep_next_obs.shape[0] == ep_g.shape[0] == ep_ag.shape[0], "shape mismatch"
-        self.memory.store_episode([ep_obs, ep_actions, ep_rewards, ep_done, ep_next_obs, ep_g, ep_ag, ep_ag_next])
+        assert (
+            ep_obs.shape[0]
+            == ep_actions.shape[0]
+            == ep_rewards.shape[0]
+            == ep_done.shape[0]
+            == ep_next_obs.shape[0]
+            == ep_g.shape[0]
+            == ep_ag.shape[0]
+        ), "shape mismatch"
+        self.memory.store_episode(
+            [
+                ep_obs,
+                ep_actions,
+                ep_rewards,
+                ep_done,
+                ep_next_obs,
+                ep_g,
+                ep_ag,
+                ep_ag_next,
+            ]
+        )
         self.ep_mean_reward = ep_rewards.sum().item() / len(ep_rewards)
         return info
 
@@ -226,64 +254,77 @@ class SAC:
         This function selects an action from the policy network. It expects
         to receive a tensor in input.
         """
+        if torch.isnan(observation).any():
+            print("NaN values found in obs")
+            print("obs:", observation)
+            raise ValueError("NaN values found in obsservation")
         with torch.no_grad():
             action, _ = self.actor(observation, with_logprob=False)
         return action
 
     def learning_step(self) -> bool:
-        # Sampling of the minibatch
-        batch = self.memory.sample(num_episodes=self.batch_size)
-        # Learning step
-        if self.num_steps % self.value_update_freq == 0:
-            value_loss1_value, value_loss2_value = self.value_learning_step(batch)
-        if self.num_steps % self.policy_update_freq == 0:
-            policy_loss_value, entropy_loss_value = self.policy_learning_step(batch)
-        if self.num_steps % self.target_update_freq == 0:
-            self.update_target_networks()
+        value_loss1_value = 0
+        value_loss2_value = 0
+        policy_loss_value = 0
+        entropy_loss_value = 0
         
-        return value_loss1_value, value_loss2_value , policy_loss_value, entropy_loss_value
+        for _ in range(self.gradient_steps):
+            batch = self.memory.sample(num_episodes=self.batch_size)
+            
+            if torch.isnan(batch["observation"]).any():
+                raise ValueError("NaN values found in sampled observations")
+
+            # Learning step
+            temp_value_loss1_value, temp_value_loss2_value = self.value_learning_step(batch)
+            temp_policy_loss_value, temp_entropy_loss_value = self.policy_learning_step(batch)
+            self.update_target_networks()
+            
+            value_loss1_value += temp_value_loss1_value
+            value_loss2_value += temp_value_loss2_value
+            policy_loss_value += temp_policy_loss_value
+            entropy_loss_value += temp_entropy_loss_value
+            
+        return (
+            value_loss1_value,
+            value_loss2_value,
+            policy_loss_value,
+            entropy_loss_value,
+        )
 
     def value_learning_step(self, batch):
-        observations= batch["observation"].squeeze(1)
-        actions = batch["action"].squeeze(1)
+        observations = batch["observation"]
+        actions = batch["action"]
         rewards = batch["reward"].squeeze(1)
         dones = batch["done"].squeeze(1)
-        new_observations = batch["new_observation"].squeeze(1)
-        goal = batch["goal"].squeeze(1)
-        achieved_goal = batch["achieved_goal"].squeeze(1)
-        next_achieved_goal = batch["achieved_goal_next"].squeeze(1)
-
+        new_observations = batch["new_observation"]
+        goals = batch["goal"]
+        
         # cat the observation and the goal
-        obs_goal = torch.cat((observations, goal), dim=1)
+        obs_goals = torch.cat((observations, goals), dim=-1)
         self.value_optimizer1.zero_grad()
         self.value_optimizer2.zero_grad()
 
         # Computation of value estimates
-        value_estimates1 = self.critic1(obs_goal, actions)
-        value_estimates2 = self.critic2(obs_goal, actions)
+        value_estimates1 = self.critic1(obs_goals, actions)
+        value_estimates2 = self.critic2(obs_goals, actions)
 
-        new_obs_goal = torch.cat((new_observations, goal), dim=1)
+        new_obs_goals = torch.cat((new_observations, goals), dim=-1)
+        
         # Computation of value targets
         with torch.no_grad():
-            actions, log_pi = self.actor(
-                new_obs_goal
-            )  # (batch_size, action_dim)
+            actions, log_pi = self.actor(new_obs_goals)  # (batch_size, action_dim)
             log_pi = log_pi.unsqueeze(1)  # hotfix
             target_values = torch.min(
-                self.target_critic1(new_obs_goal, actions),
-                self.target_critic2(new_obs_goal, actions),
+                self.target_critic1(new_obs_goals, actions),
+                self.target_critic2(new_obs_goals, actions),
             )
             targets = rewards + (1 - dones) * self.gamma * (
                 target_values - self.alpha * log_pi
             )
 
         # MSBE
-        value_loss1: torch.Tensor = self.value_loss_fn(
-            value_estimates1, targets
-        )
-        value_loss2: torch.Tensor = self.value_loss_fn(
-            value_estimates2, targets
-        )
+        value_loss1: torch.Tensor = self.value_loss_fn(value_estimates1, targets)
+        value_loss2: torch.Tensor = self.value_loss_fn(value_estimates2, targets)
         value_loss1_value = value_loss1.item()
         value_loss1.backward()
         self.value_optimizer1.step()
@@ -293,14 +334,8 @@ class SAC:
         return value_loss1_value, value_loss2_value
 
     def policy_learning_step(self, batch):
-        observations= batch["observation"].squeeze(1)
-        actions = batch["action"].squeeze(1)
-        rewards = batch["reward"].squeeze(1)
-        dones = batch["done"].squeeze(1)
-        new_observations = batch["new_observation"].squeeze(1)
-        goal = batch["goal"].squeeze(1)
-        achieved_goal = batch["achieved_goal"].squeeze(1)
-        next_achieved_goal = batch["achieved_goal_next"].squeeze(1)
+        observations = batch["observation"]
+        goals = batch["goal"]
         self.policy_optimizer.zero_grad()
 
         # Don't waste computational effort
@@ -309,14 +344,16 @@ class SAC:
         for param in self.critic2.parameters():
             param.requires_grad = False
 
-        obs_goal = torch.cat((observations, goal), dim=1)
+        obs_goals = torch.cat((observations, goals), dim=-1)
 
         # Policy Optimization
-        estimated_actions, log_pi = self.actor(obs_goal)
+        estimated_actions, log_pi = self.actor(obs_goals)
+        log_pi = log_pi.unsqueeze(-1)
         estimated_values: torch.Tensor = torch.min(
-            self.critic1(obs_goal, estimated_actions),
-            self.critic2(obs_goal, estimated_actions),
+            self.critic1(obs_goals, estimated_actions),
+            self.critic2(obs_goals, estimated_actions),
         )
+        
         policy_loss: torch.Tensor = (
             self.alpha * log_pi - estimated_values
         ).mean()  # perform gradient ascent
@@ -353,17 +390,28 @@ class SAC:
                 target.data.mul(polyak)
                 target.data.add((1 - polyak) * online.data)
 
-    def episode_update(self, pbar: tqdm = None, info: dict = None, episode_mean_losses: dict = None):
+    def episode_update(
+        self, pbar: tqdm = None, info: dict = None, episode_mean_losses: dict = None
+    ):
 
-        wandb.log({
-            f"{self.agent_name}/mean_ep_reward": self.ep_mean_reward,
-            f"{self.agent_name}/ep_num_steps": self.num_steps,
-            f"{self.agent_name}/alpha": self.alpha,
-            f"{self.agent_name}/loss/value_loss1": episode_mean_losses["value_loss1"],
-            f"{self.agent_name}/loss/value_loss2": episode_mean_losses["value_loss2"],
-            f"{self.agent_name}/loss/policy_loss": episode_mean_losses["policy_loss"],
-            f"{self.agent_name}/loss/entropy_loss": episode_mean_losses["entropy_loss"],
-                }
+        wandb.log(
+            {
+                f"{self.agent_name}/mean_ep_reward": self.ep_mean_reward,
+                f"{self.agent_name}/ep_num_steps": self.num_steps,
+                f"{self.agent_name}/alpha": self.alpha,
+                f"{self.agent_name}/loss/value_loss1": episode_mean_losses[
+                    "value_loss1"
+                ],
+                f"{self.agent_name}/loss/value_loss2": episode_mean_losses[
+                    "value_loss2"
+                ],
+                f"{self.agent_name}/loss/policy_loss": episode_mean_losses[
+                    "policy_loss"
+                ],
+                f"{self.agent_name}/loss/entropy_loss": episode_mean_losses[
+                    "entropy_loss"
+                ],
+            }
         )
 
         if pbar is not None:
@@ -382,6 +430,7 @@ class SAC:
         with tqdm(total=num_ep) as pbar:
             for i in range(num_ep):
                 observation = torch.FloatTensor(env.reset()[0])
+                obs_goal = torch.cat((observation, torch.tensor(env.goal)), dim=-1)
 
                 terminated = False
                 truncated = False
@@ -390,19 +439,19 @@ class SAC:
                 while not terminated and not truncated:
                     with torch.no_grad():
                         action, _ = self.actor(
-                            observation, deterministic=True, with_logprob=False
+                            obs_goal, deterministic=True, with_logprob=False
                         )
-                    observation, reward, terminated, truncated, info = (
-                        env.step(action.cpu().numpy())
+                    observation, reward, terminated, truncated, info = env.step(
+                        action.cpu().numpy()
                     )
                     observation = torch.FloatTensor(observation)
+                    obs_goal = torch.cat((observation, torch.tensor(env.goal)), dim=-1)
+                    
                     total_reward += reward
                     if render:
                         self.env.render()
 
-                mean_reward = mean_reward + (1 / (i + 1)) * (
-                    total_reward - mean_reward
-                )
+                mean_reward = mean_reward + (1 / (i + 1)) * (total_reward - mean_reward)
                 pbar.set_description(
                     f"Episode {i+1} Mean Reward: {mean_reward:.2f} Ep_Reward: {total_reward:.2f} Termination: {info['log']}"
                 )
@@ -418,7 +467,8 @@ class SAC:
         os.makedirs(path, exist_ok=True)
 
         torch.save(
-            self.actor.state_dict(), open(os.path.join(path, f"actor_{self.ep}.pt"), "wb")
+            self.actor.state_dict(),
+            open(os.path.join(path, f"actor_{self.ep}.pt"), "wb"),
         )
         torch.save(
             self.critic1.state_dict(),
@@ -430,9 +480,9 @@ class SAC:
         )
         print("MODELS SAVED!")
 
-    def load(self, ep=10000):
-        here = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(here, "models", self.agent_name, self.name)
+    def load(self, ep=10001):
+        here = WEIGHTS_DIR
+        path = os.path.join(here, self.agent_name, self.name)
 
         self.actor.load_state_dict(
             torch.load(

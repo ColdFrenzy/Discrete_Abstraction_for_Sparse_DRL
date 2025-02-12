@@ -3,6 +3,7 @@ from tqdm import tqdm
 from src.reward_machines.reward_machine_cont import RewardMachine
 from src.algorithms.agent_rl import AgentRL
 from src.algorithms.qlearning import QLearning
+from src.algorithms.rmax import RMax
 from src.environments.state_encoder_uav import (
     StateEncoderUAV,
 )
@@ -180,25 +181,21 @@ def compute_value_function(map_name, size, OBST, num_episodes = 10000, gamma: fl
     # Avvolgi l'ambiente con il wrapper RMEnvironmentWrapper
     rm_env = RMEnvironmentWrapper(env, [a1, a3]) # aggiungici a3 se vuoi averne 2 nella lista
 
-    rmax_1 = QLearning(
-        gamma=gamma,
-        action_selection='greedy',
-        learning_rate=None,
-        epsilon_start=1.0,
-        epsilon_end=0.2,
-        epsilon_decay=0.99,
-        state_space_size=env.grid_width * env.grid_height * RM_3.numbers_state(),
+    rmax_1 = RMax(
+        state_space_size=env.grid_width * env.grid_height * RM_1.numbers_state(),
         action_space_size=4,
+        s_a_threshold=500,
+        max_reward=10,
+        gamma=gamma,
+        epsilon_one=0.99,
     )
-    rmax_3 = QLearning(
-        gamma=gamma,
-        action_selection='greedy',
-        learning_rate=None,
-        epsilon_start=1.0,
-        epsilon_end=0.2,
-        epsilon_decay=0.99,
+    rmax_3 = RMax(
         state_space_size=env.grid_width * env.grid_height * RM_3.numbers_state(),
         action_space_size=4,
+        s_a_threshold=500,
+        max_reward=10,
+        gamma=gamma,
+        epsilon_one=0.99,
     )
 
     a1.set_learning_algorithm(rmax_1)
@@ -332,7 +329,7 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
 
     # Add agents to the environment
     a1 = AgentRL("a1", env)
-    a1.set_initial_position(0, 0)  # Aggiungo la pos anche allo stato dell'agente
+    a1.set_initial_position(3, 4)  # Aggiungo la pos anche allo stato dell'agente
     a1.add_state_encoder(StateEncoderUAV(a1))
 
     

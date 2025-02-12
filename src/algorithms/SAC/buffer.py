@@ -38,6 +38,10 @@ class EpisodicBuffer:
         mb_obs, mb_actions, mb_reward, mb_done, mb_next_obs, mb_g, mb_ag, mb_ag_next = episode_batch
         ep_len = mb_actions.shape[0]
         idxs = self._get_storage_idx()
+        
+        if torch.isnan(mb_obs).any():
+            raise ValueError("Observations contain NaN values when storing")
+        
         # store the informations
         self.buffer['observation'][idxs, :ep_len] = mb_obs
         self.buffer['action'][idxs, :ep_len] = mb_actions
@@ -48,8 +52,6 @@ class EpisodicBuffer:
         self.buffer['achieved_goal'][idxs, :ep_len] = mb_ag
         self.buffer['achieved_goal_next'][idxs, :ep_len] = mb_ag_next
         self.buffer['episode_len'][idxs] = ep_len
-
-
 
     def _get_storage_idx(self, inc=1):
         """Get the storage index.
@@ -86,15 +88,30 @@ class EpisodicBuffer:
             return self.sample_func(temp_buffer, num_episodes)
         sampled_indices = random.sample(range(self.size), num_episodes)
         observations = self.buffer["observation"][sampled_indices].to(device)
+        
+        if torch.isnan(observations).any():
+            raise ValueError("Observations contain NaN values when samplingggg")
+        
         actions = self.buffer["action"][sampled_indices].to(device)
         rewards = self.buffer["reward"][sampled_indices].to(device)
         dones = self.buffer["done"][sampled_indices].to(device)
         new_observations = self.buffer["new_observation"][sampled_indices].to(
             device
         )
-        goal = self.buffer['goal'][sampled_indices].to(device)
-        achieved_goal = self.buffer['achieved_goal'][sampled_indices].to(device)
-        next_achieved_goal = self.buffer['achieved_goal'][sampled_indices, 1:, :].to(device)
+        goals = self.buffer['goal'][sampled_indices].to(device)
+        achieved_goals = self.buffer['achieved_goal'][sampled_indices].to(device)
+        next_achieved_goals = self.buffer['achieved_goal'][sampled_indices, 1:, :].to(device)
         n_steps = self.buffer['episode_len'][sampled_indices].to(device)
-        return [observations, actions, rewards, dones, new_observations, goal, achieved_goal, next_achieved_goal, n_steps]
+        
+        return {
+            'observation': observations,
+            'action': actions,
+            'reward': rewards,
+            'done': dones,
+            'new_observation': new_observations,
+            'goal': goals,
+            'achieved_goal': achieved_goals,
+            'next_achieved_goal': next_achieved_goals,
+            'n_steps': n_steps
+        }
 

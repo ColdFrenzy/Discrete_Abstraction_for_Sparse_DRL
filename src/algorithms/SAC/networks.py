@@ -11,13 +11,14 @@ def network(sizes, activation, output_activation=nn.Identity):
     for j in range(len(sizes) - 1):
         activation = activation if j < len(sizes) - 2 else output_activation
         layers += [nn.Linear(sizes[j], sizes[j + 1]), activation()]
-    return nn.Sequential(*layers)
+    model = nn.Sequential(*layers)
+    return model
 
 
 class Actor(nn.Module):
     """Parametrized Policy Network."""
 
-    def __init__(self, env_params, hidden_dims=(256, 256), activation=nn.GELU):
+    def __init__(self, env_params, hidden_dims=(512, 512), activation=nn.GELU):
         super().__init__()
         # dimensions
         dimensions = (
@@ -33,23 +34,20 @@ class Actor(nn.Module):
         return self.action_bound * self.pi(obs)
 
 
-LOG_STD_MAX = 2
+LOG_STD_MAX = 20
 LOG_STD_MIN = -20
-
 
 class SquashedGaussianActor(nn.Module):
     """Stochastic Policy Network."""
 
-    def __init__(self, env_params, hidden_dims=(512, 512), activation=nn.GELU):
+    def __init__(self, env_params, hidden_dims=(512, 512), activation=nn.LeakyReLU):
         super().__init__()
         # dimensions
         dimensions = [env_params["obs_goal_dim"]] + list(hidden_dims)
         self.pi = network(dimensions, activation)
         self.action_bound = env_params["action_bound"]
         self.mu_layer = nn.Linear(dimensions[-1], env_params["action_dim"])
-        self.log_std_layer = nn.Linear(
-            dimensions[-1], env_params["action_dim"]
-        )
+        self.log_std_layer = nn.Linear(dimensions[-1], env_params["action_dim"])
 
     def forward(self, obs, deterministic=False, with_logprob=True):
         obs = obs.to(device)
@@ -58,7 +56,6 @@ class SquashedGaussianActor(nn.Module):
         log_std = self.log_std_layer(output)
         log_std = torch.clamp(log_std, LOG_STD_MIN, LOG_STD_MAX)
         std = torch.exp(log_std)
-
         pi_distribution = torch.distributions.Normal(mu, std)
         if deterministic:
             action = mu
@@ -67,9 +64,7 @@ class SquashedGaussianActor(nn.Module):
 
         if with_logprob:
             logp_pi = pi_distribution.log_prob(action).sum(axis=-1)
-            logp_pi -= (
-                2 * (np.log(2) - action - F.softplus(-2 * action))
-            ).sum(axis=1)
+            logp_pi -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=-1)
         else:
             logp_pi = None
 
