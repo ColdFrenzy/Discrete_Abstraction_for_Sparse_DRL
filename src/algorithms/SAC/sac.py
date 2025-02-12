@@ -87,7 +87,8 @@ class SAC:
         self.num_batches = num_batches
         self.max_episodes = max_episodes
         self.max_ep_alpha_decay = max_ep_alpha_decay
-        self.total_win = 0
+        self.total_win = [0 for _ in range(50)]
+        self.total_win_index = 0
 
         # Alpha discounting
         self.alpha_update = ExponentialDiscountScheduler(
@@ -145,7 +146,6 @@ class SAC:
         # Life stats
         self.ep = 1
         self.training = True
-        agent_name = self.agent_name
 
         # Populating the experience replay memory
         for _ in range(self.batch_size):
@@ -160,7 +160,12 @@ class SAC:
                 # start to collect samples
                 info = self.rollout_episode(observation)
                 if info["log"] == "GOAL REACHED":
-                    self.total_win += 1
+                    self.total_win[self.total_win_index] = 1
+                    self.total_win_index = int((self.total_win_index+1) % 50)
+                else:
+                    self.total_win[self.total_win_index] = 0
+                    self.total_win_index = int((self.total_win_index+1) % 50)
+
                 value_loss_1_mean, value_loss_2_mean, policy_loss_mean, entropy_loss_mean = [], [], [], []
                 for _ in range(self.num_batches):
                     value_loss1_value, value_loss2_value , policy_loss_value, entropy_loss_value = self.learning_step()
@@ -168,19 +173,19 @@ class SAC:
                     value_loss_2_mean.append(value_loss2_value)
                     policy_loss_mean.append(policy_loss_value)
                     entropy_loss_mean.append(entropy_loss_value)
-
+                win_rate = sum(self.total_win) / len(self.total_win)
                 mean_losses = {
                     "value_loss1": np.mean(value_loss_1_mean),
                     "value_loss2": np.mean(value_loss_2_mean),
                     "policy_loss": np.mean(policy_loss_mean),
                     "entropy_loss": np.mean(entropy_loss_mean),
-                    "total_win": self.total_win,
+                    "win_rate": win_rate,
                 }
                 self.episode_update(pbar, info, mean_losses)
                 if self.ep % 1000 == 0:
                     self.env.render_episode(self)
                     self.env.save_episode(self.ep, name=f"uav_{self.agent_name}_cont")
-                    self.save()
+                    self.save("gamma_"+str(self.gamma))
 
     def rollout_episode(self, observation: np.ndarray) -> tuple:
         """
@@ -378,7 +383,8 @@ class SAC:
             f"{self.agent_name}/loss/value_loss2": episode_mean_losses["value_loss2"],
             f"{self.agent_name}/loss/policy_loss": episode_mean_losses["policy_loss"],
             f"{self.agent_name}/loss/entropy_loss": episode_mean_losses["entropy_loss"],
-                }
+            f"{self.agent_name}/win_rate": episode_mean_losses["win_rate"],
+            }
         )
 
         if pbar is not None:
@@ -430,7 +436,7 @@ class SAC:
 
     def save(self, name):
         here = WEIGHTS_DIR
-        path = os.path.join(here, name, self.agent_name, self.name)
+        path = os.path.join(here, self.agent_name, name, self.name)
 
         os.makedirs(path, exist_ok=True)
 
@@ -449,7 +455,7 @@ class SAC:
 
     def load(self, name, ep=10000):
         here = WEIGHTS_DIR
-        path = os.path.join(here, self.agent_name, self.name)
+        path = os.path.join(here, self.agent_name, name, self.name)
 
         self.actor.load_state_dict(
             torch.load(

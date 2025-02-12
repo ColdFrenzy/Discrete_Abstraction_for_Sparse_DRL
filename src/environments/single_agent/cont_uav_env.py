@@ -379,8 +379,9 @@ class ContinuousUAV(Env):
             max_steps = self._max_episode_steps
         for step in range(max_steps):
             with torch.no_grad():
+                obs_goal = torch.cat([torch.tensor(self.observations, dtype=torch.float32), torch.tensor(self.goal, dtype=torch.float32)])
                 actions, _ = agent.actor(
-                            torch.tensor(self.observations,dtype=torch.float32), deterministic=True, with_logprob=False
+                            obs_goal, deterministic=True, with_logprob=False
                         )
             self.observations,  self.reward, terminated, truncated, _ = self.step(actions.cpu().numpy())
             self.render()

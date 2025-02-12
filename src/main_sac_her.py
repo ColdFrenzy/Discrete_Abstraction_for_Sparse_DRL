@@ -23,6 +23,7 @@ env_reward_type = RewardType.sparse # or model, or sparse
 is_slippery = False
 map_size = 10
 MAX_EPISODE_STEPS = 400
+NUM_BATCHES = 2
 OBST = True
 if OBST:
     map_name = MAPS_OBST[map_size]
@@ -35,14 +36,14 @@ training = True
 transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
 experiment_name = f"sac-her-{env_reward_type.name}-{map_size}-obstacles_{OBST}"
 
-NUM_EPISODES_CONT = 100000
+NUM_EPISODES_CONT = 100000 # 100000
 
 
 def main(gamma):
     env1 = ContinuousUAV(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = [0.5, map_size-0.5], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False)
     # env2 = ContinuousUAV(map_name =  map_name, agent_name="a3", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = [0.5, 0.5], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False)
     # agent1 = SAC(name = experiment_name, agent_name="a1",  env = env1, max_episodes = NUM_EPISODES_CONT, alpha_initial=0.4, alpha_final=0.01, gamma=0.1, max_ep_alpha_decay=2000)
-    agent1 = SAC_HER(name = experiment_name, agent_name="a1",  env = env1, max_episodes = NUM_EPISODES_CONT, alpha_initial=0.4, alpha_final=0.01, gamma=gamma, max_ep_alpha_decay=NUM_EPISODES_CONT/2)
+    agent1 = SAC_HER(name = experiment_name, agent_name="a1",  env = env1,num_batches=NUM_BATCHES, max_episodes = NUM_EPISODES_CONT, alpha_initial=0.4, alpha_final=0.01, gamma=gamma, max_ep_alpha_decay=NUM_EPISODES_CONT/2)
     # agent2 = SAC(name = experiment_name, agent_name="a3",  env = env2, max_episodes = NUM_EPISODES_CONT, alpha_initial=0.4, alpha_final=0.01, gamma=0.1, max_ep_alpha_decay=2000) # alpha_final=0.05,
 
 
@@ -56,6 +57,7 @@ def main(gamma):
         
 
 if __name__ == "__main__":
+
     for gamma in [0.1, 0.5, 0.9]:
         main(gamma)
 
