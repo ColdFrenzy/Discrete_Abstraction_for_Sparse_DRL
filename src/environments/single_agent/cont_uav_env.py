@@ -204,8 +204,8 @@ class ContinuousUAV(Env):
             {"log": log},
         )
 
-    def reset(self) -> Tuple[np.ndarray, dict]:
-        super().reset(seed=SEED)
+    def reset(self, seed=SEED) -> Tuple[np.ndarray, dict]:
+        super().reset(seed=seed)
         self.num_steps = 0
         self.observation = np.array(
             self.agent_initial_pos

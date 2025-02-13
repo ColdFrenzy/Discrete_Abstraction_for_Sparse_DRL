@@ -50,17 +50,16 @@ class ContinuousUAVSb3(ContinuousUAV):
         is_display: bool = True,
     ):
         super().__init__(
-            self,
-            map_name: map_name,
-            agent_name: agent_name,
-            size: size,
-            agent_initial_pos: agent_initial_pos,
-            OBST: OBST,
-            reward_type: reward_type,
-            max_episode_steps: max_episode_steps,
-            is_slippery: is_slippery,
-            is_rendered: is_rendered,
-            is_display: is_display,
+            map_name=map_name,
+            agent_name=agent_name,
+            size=size,
+            agent_initial_pos=agent_initial_pos,
+            OBST=OBST,
+            reward_type=reward_type,
+            max_episode_steps=max_episode_steps,
+            is_slippery=is_slippery,
+            is_rendered=is_rendered,
+            is_display=is_display,
         )
 
         # Environment parameters
@@ -90,63 +89,52 @@ class ContinuousUAVSb3(ContinuousUAV):
                 assert reward == env.compute_reward(ob['achieved_goal'], ob['desired_goal'], info)
         """
         
-        reward = 0
-        desired_goal_cell = self.frame2grid()
-        # Check for wall 
-        if achieved_goal[0] <= 0 or achieved_goal[0] >= self.size:
-            reward = -1
-        if achieved_goal[1] <= 0 or achieved_goal[1] >= self.size:
-            reward = -1     
+        if len(achieved_goal.shape) == 2:
+            batch_size = len(achieved_goal)
+            batch_reward = []
+            for i in range(batch_size):
+                reward = 0
+                desired_goal_cell = self.frame2grid(desired_goal[i])
+                # Check for wall 
+                if achieved_goal[i][0] <= 0 or achieved_goal[i][0] >= self.size:
+                    reward = -1
+                if achieved_goal[i][1] <= 0 or achieved_goal[i][1] >= self.size:
+                    reward = -1     
 
-        # Check for successful termination
-        if self.is_inside_cell(achieved_goal, desired_goal_cell):
-            reward += 10
+                # Check for successful termination
+                if self.is_inside_cell(achieved_goal[i], desired_goal_cell):
+                    reward += 10
 
+                # Check for failure termination
+                for hole in self.holes:
+                    if self.is_inside_cell(achieved_goal[i], hole):
+                        reward = -10
+                        break
+                batch_reward.append(reward)
+            return np.array(batch_reward)
+                
+        else:
+            reward = 0
+            desired_goal_cell = self.frame2grid(desired_goal)
+            # Check for wall 
+            if achieved_goal[0] <= 0 or achieved_goal[0] >= self.size:
+                reward = -1
+            if achieved_goal[1] <= 0 or achieved_goal[1] >= self.size:
+                reward = -1     
 
-        # Check for failure termination
-        for hole in self.holes:
-            if self.is_inside_cell(achieved_goal, hole):
+            # Check for successful termination
+            if self.is_inside_cell(achieved_goal, desired_goal_cell):
+                reward += 10
 
-                log = "HOLE"
-                break
-
-        return reward
-
-
-        raise NotImplementedError
-
-
-
-    def reward_function_batch(self, obs: torch.tensor, desired_goal: torch.tensor, info: dict = None) -> Tuple[float, bool]:
-        # obs size [batch_size, 2]
-        reward = []
-        log = None
-        # Check for wall 
-        for i in range(obs.size(0)):
-            step_reward = 0
-            if obs[i, 0] <= 0 or obs[i, 0] >= self.size:
-                obs[i, 0] = np.clip(obs[i, 0], 0.05, self.size - 0.05)
-                step_reward = -1
-            if obs[i, 1] <= 0 or obs[i, 1] >= self.size:
-                obs[i, 1] = np.clip(obs[i, 1], 0.05, self.size - 0.05)
-                step_reward = -1
-            
-
-            # check for goal
-            if self.is_inside_cell(obs[i], desired_goal[i]):
-                log = "GOAL REACHED"
-                step_reward = 10
-            
             # Check for failure termination
             for hole in self.holes:
-                if self.is_inside_cell(obs[i], hole):
-                    step_reward = -10
-                    log = "HOLE"
+                if self.is_inside_cell(achieved_goal, hole):
+                    reward = -10
                     break
-            reward.append(step_reward)
-        reward = torch.tensor(reward).unsqueeze(1)
+            
+            return reward
 
-        return reward
+
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, dict]:
         """
@@ -168,19 +156,29 @@ class ContinuousUAVSb3(ContinuousUAV):
             np.array([new_x, new_y])
         )
 
+        reward = self.reward
         self.trajectory.append(self.observation)
         self.num_steps += 1
 
+        obs_goal = {
+            'observation': self.observation.copy().astype(np.float32),
+            'achieved_goal': self.observation.copy().astype(np.float32),
+            'desired_goal': self.goal.copy().astype(np.float32),
+        }
+        # new_obs, rewards, dones, infos
         return (
-            self.observation,
-            self.reward,
+            obs_goal,
+            reward,
             terminated,
             truncated,
             {"log": log},
         )
 
-    def reset(self) -> Tuple[np.ndarray, dict]:
-        super().reset(seed=SEED)
+    def render(self, mode="human"):
+        super().render()
+
+    def reset(self, seed=SEED) -> dict:
+        super().reset(seed=seed)
         # Enforce that each GoalEnv uses a Goal-compatible observation space.
         if not isinstance(self.observation_space, gym.spaces.Dict):
             raise error.Error(
@@ -195,262 +193,40 @@ class ContinuousUAVSb3(ContinuousUAV):
                     )
                 )
         observation = {
-            'observation': self.observation.copy(),
-            'achieved_goal': self.observation.copy(),
-            'desired_goal': self.goal.copy(),
+            'observation': self.observation.copy().astype(np.float32),
+            'achieved_goal': self.observation.copy().astype(np.float32),
+            'desired_goal': self.goal.copy().astype(np.float32),
         }
     
         self.start_obs = self.observation
         self.trajectory = []
         self.frames = []
-        self.reward = 0
-        return observation
+        self.reward = 0.0
+        return observation, {}
 
 
 
-    def is_inside_cell(self, pos: np.ndarray, cell: np.ndarray) -> bool:
-        """
-        Check if a position is inside a cell.
-        """
-        cell_coord = self.grid2frame(cell)
-        inside = True
-        if pos[0] < cell_coord[0] - 0.5:
-            inside = False  # left
-        if pos[0] > cell_coord[0] + 0.5:
-            inside = False  # right
-        if pos[1] < cell_coord[1] - 0.5:
-            inside = False  # bottom
-        if pos[1] > cell_coord[1] + 0.5:
-            inside = False  # top
-        return inside
-
-    def load_values(self) -> np.ndarray:
-        """
-        Load the Q-table from the file system.
-        """
-        qtable = np.load(f"{QTABLE_DIR}/{self.transition_mode.name}/qtable_{self.size}_obstacles_{self.OBST}.npz")[self.agent_name]
-        return qtable
-
-    def frame2matrix(self, frame_pos: np.ndarray) -> np.ndarray:
-        """
-        Convert a frame position to a matrix index.
-        """
-        x, y = self.frame2grid(frame_pos)
-
-        # Inverting the coordinates
-        # x actually represents the columns and y the rows
-        indices = np.floor(np.array([y, x])).astype(int)
-
-        return indices
-
-    def frame2grid(self, frame_pos: np.ndarray) -> np.ndarray:
-        """
-        Convert a frame position to a grid position.
-        """
-        assert len(frame_pos) == 2
-        x, y = frame_pos
-
-        # Flipping y axis
-        y = self.size - y
-
-        cell = np.array([x, y])
-
-        return cell
-
-    def grid2frame(self, grid_pos: np.ndarray) -> np.ndarray:
-        """
-        Convert a grid position to a frame position.
-        """
-        assert len(grid_pos) == 2
-        x, y = grid_pos
-        # Flipping y axis
-        y = self.size - y
-
-        # Centering the position
-        x += 0.5
-        y -= 0.5
-
-        return np.array([x, y])
-
-    def render(self):
-        """
-        Renders the environment with the given observation.
+    def compute_truncated(self, achieved_goal, desired_goal, info):
+        """Compute the step truncation. Allows to customize the truncated states depending on the
+        desired and the achieved goal. If you wish to determine truncated states independent of the goal,
+        you can include necessary values to derive it in 'info' and compute it accordingly. Truncated states
+        are those that are out of the scope of the Markov Decision Process (MDP) such as time constraints in a
+        continuing task. More information can be found in: https://farama.org/New-Step-API#theory
 
         Args:
-            obs (np.ndarray): The observation to render.
+            achieved_goal (object): the goal that was achieved during execution
+            desired_goal (object): the desired goal that we asked the agent to attempt to achieve
+            info (dict): an info dictionary with additional information
+
+        Returns:
+            bool: The truncated state that corresponds to the provided achieved goal w.r.t. to the desired
+            goal. Note that the following should always hold true:
+
+                ob, reward, terminated, truncated, info = env.step()
+                assert truncated == env.compute_truncated(ob['achieved_goal'], ob['desired_goal'], info)
         """
-        if not self.is_pygame_initialized and self.is_rendered:
-            self.init_render()
-            self.is_pygame_initialized = True
-            self.trajectory = []
-            self.frames = []
-
-        for x in range(0, self.screen_width, self._cell_size):
-            for y in range(0, self.screen_height, self._cell_size):
-                # Draw the ice
-                rect = ((x, y), (self._cell_size, self._cell_size))
-                self.screen.blit(self.ice_img, (x, y))
-                pygame.draw.rect(self.screen, (200, 240, 240), rect, 1)
-
-        # Draw the holes
-        for hole in self.holes:
-            hole_x, hole_y = hole
-            hole_x = (
-                hole_x * self._cell_size
-            )  # - self.hole_img.get_width() // 2
-            hole_y = (
-                hole_y * self._cell_size
-            )  # - self.hole_img.get_height() // 2
-            if self.is_inside_cell(self.observation, hole):
-                self.screen.blit(self.cracked_hole_img, (hole_x, hole_y))
-            else:
-                self.screen.blit(self.hole_img, (hole_x, hole_y))
-
-        for goal_char, (g_x, g_y) in self.goals.items():
-            goal_rect = pygame.Rect(
-                g_x * self._cell_size,
-                g_y * self._cell_size,
-                self._cell_size,
-                self._cell_size,
-            )
-            pygame.draw.rect(self.screen, (255, 215, 0), goal_rect)
-            goal_text = self.font.render(str(goal_char), True, (0, 0, 0))
-            text_rect = goal_text.get_rect(center=goal_rect.center)
-            self.screen.blit(goal_text, text_rect)
-
-        # Draw the agent (it lives in the continuous reference frame with different coordinates)
-        # Namely, [0,0] is in the bottom left corner, as if the grid was a cartesian plane
-        # Thus, positive y speed is upwards, positive x speed is to the right
-        x, y = self.frame2grid(self.observation)
-        agent_x = x * self._cell_size - self.agent_img.get_width() // 2
-        agent_y = y * self._cell_size - self.agent_img.get_height() // 2
-        self.screen.blit(self.agent_img, (agent_x, agent_y)) 
-
-        # Draw the trajectory
-        if self.trajectory:
-            for point in self.trajectory:
-                traj_x, traj_y = self.frame2grid(point)
-                traj_x = traj_x * self._cell_size
-                traj_y = traj_y * self._cell_size
-                pygame.draw.circle(
-                    self.screen, (255, 0, 0), (traj_x, traj_y), 5
-                )
-
-        reward_text = f"Reward: {self.reward}"
-        text_surface = self.font.render(reward_text, True, (0, 0, 0))  # White color
-        self.screen.blit(text_surface, (10, 10))  # Display text at top-left corner
-
-
-        if not self.is_display:
-            image_data = pygame.surfarray.array3d(self.screen)
-        else:
-            image_data = pygame.surfarray.array3d(pygame.display.get_surface())
-        image_data = image_data.transpose([1, 0, 2])
-        self.frames.append(image_data)
-        
-        if self.is_display:
-            pygame.event.pump()
-            pygame.display.update()
-            self.clock.tick(60)
-        
-    def render_episode(self, agent: "RLAgent", max_steps: int = None):
-        """
-        Renders an episode with the given agents.
-        """
-        self.observations,_ = self.reset()
-        self.render()
-        if max_steps is None:
-            max_steps = self._max_episode_steps
-        for step in range(max_steps):
-            with torch.no_grad():
-                obs_goal = torch.cat([torch.tensor(self.observations, dtype=torch.float32), torch.tensor(self.goal, dtype=torch.float32)])
-                actions, _ = agent.actor(
-                            obs_goal, deterministic=True, with_logprob=False
-                        )
-            self.observations,  self.reward, terminated, truncated, _ = self.step(actions.cpu().numpy())
-            self.render()
-            if truncated:
-                break
-
-
-    def save_episode(self, episode, name="uav_cont"):
-        # Creare la cartella "episodes" se non esiste
-
-        episodes_dir = EPISODES_DIR
-        if not os.path.exists(episodes_dir):
-            os.makedirs(episodes_dir, exist_ok=True)
-
-
-        if self.frames:
-            # Salva in formato AVI senza convertire i frames in BGR, poiché pygame li fornisce in RGB
-            video_path = f"{episodes_dir}/{name}_episode_{episode}.avi"
-            height, width, layers = self.frames[0].shape
-            video = cv2.VideoWriter(
-                video_path, cv2.VideoWriter_fourcc(*"DIVX"), 2, (width, height)
-            )
-
-            for frame in self.frames:
-                video.write(
-                    cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                )  # Usa i frames direttamente senza conversione
-
-            video.release()
-
-            # Salva in formato GIF
-            gif_path = f"{episodes_dir}/{name}_episode_{episode}.gif"
-            # I frames sono già in RGB, quindi li usiamo direttamente
-            imageio.mimsave(gif_path, self.frames, fps=10, loop=0)
-
-            self.frames = []  # Pulisci la lista dei frames
-
-    def init_render(self):
-        """
-        Initialize the Pygame environment.
-        """
-        pygame.init()
-        self.clock = pygame.time.Clock()
-        # Screen
-        self.screen_width = self.grid_width * self._cell_size
-        self.screen_height = self.grid_width * self._cell_size
-        if not self.is_display:
-            self.screen = pygame.Surface((self.screen_width, self.screen_height))
-        else:
-            self.screen = pygame.display.set_mode(
-                (int(self.screen_width), int(self.screen_height))
-            )
-
-        # Images
-        self.font = pygame.font.SysFont("Arial", 25)  # Crea un oggetto font
-
-        agent_img_path = IMAGE_DIR / "drone.png"
-        self.agent_img = scale(
-            load(agent_img_path), (self._cell_size, self._cell_size)
-        )
-        ice_img_path = IMAGE_DIR / "white.png"
-        self.ice_img = scale(
-            load(ice_img_path), (self._cell_size, self._cell_size)
-        )
-        hole_img_path = IMAGE_DIR / "red.png"
-        self.hole_img = scale(
-            load(hole_img_path), (self._cell_size, self._cell_size)
-        )
-        cracked_hole_img_path = IMAGE_DIR / "red.png"
-        self.cracked_hole_img = scale(
-            load(cracked_hole_img_path), (self._cell_size, self._cell_size)
-        )
-        goal_img_path = IMAGE_DIR / "yellow.png"
-        self.goal_img = scale(
-            load(goal_img_path), (self._cell_size // 3, self._cell_size // 3)
-        )
-
-    def quit_render(self):
-        """
-        Quit the Pygame environment.
-        """
-        pygame.quit()
-
-
-
+        return False
+    
 
     def compute_terminated(self, achieved_goal, desired_goal, info):
         """Compute the step termination. Allows to customize the termination states depending on the
@@ -473,26 +249,4 @@ class ContinuousUAVSb3(ContinuousUAV):
                 ob, reward, terminated, truncated, info = env.step()
                 assert terminated == env.compute_terminated(ob['achieved_goal'], ob['desired_goal'], info)
         """
-        raise NotImplementedError
-
-
-    def compute_truncated(self, achieved_goal, desired_goal, info):
-        """Compute the step truncation. Allows to customize the truncated states depending on the
-        desired and the achieved goal. If you wish to determine truncated states independent of the goal,
-        you can include necessary values to derive it in 'info' and compute it accordingly. Truncated states
-        are those that are out of the scope of the Markov Decision Process (MDP) such as time constraints in a
-        continuing task. More information can be found in: https://farama.org/New-Step-API#theory
-
-        Args:
-            achieved_goal (object): the goal that was achieved during execution
-            desired_goal (object): the desired goal that we asked the agent to attempt to achieve
-            info (dict): an info dictionary with additional information
-
-        Returns:
-            bool: The truncated state that corresponds to the provided achieved goal w.r.t. to the desired
-            goal. Note that the following should always hold true:
-
-                ob, reward, terminated, truncated, info = env.step()
-                assert truncated == env.compute_truncated(ob['achieved_goal'], ob['desired_goal'], info)
-        """
-        raise NotImplementedError
+        return False
