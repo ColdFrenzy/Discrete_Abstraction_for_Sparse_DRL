@@ -122,7 +122,8 @@ class ContinuousUAV(Env):
             
 
         # Check for successful termination
-        if self.is_inside_cell(obs, desired_goal):
+        desired_goal_cell = self.grid2frame(desired_goal)
+        if self.is_inside_cell(obs, desired_goal_cell):
             log = "GOAL REACHED"
             if self.reward_type != RewardType.model:
                 reward += 10
@@ -166,7 +167,8 @@ class ContinuousUAV(Env):
                 step_reward = -1
             
             # check for goal
-            if self.is_inside_cell(obs[i], desired_goal[i]):
+            desired_goal_cell = self.grid2frame(desired_goal[i])
+            if self.is_inside_cell(obs[i], desired_goal_cell):
                 log = "GOAL REACHED"
                 step_reward = 10
             
