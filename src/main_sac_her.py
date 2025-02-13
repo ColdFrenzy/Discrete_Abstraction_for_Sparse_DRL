@@ -23,7 +23,7 @@ env_reward_type = RewardType.sparse # or model, or sparse
 is_slippery = False
 map_size = 10
 MAX_EPISODE_STEPS = 400
-NUM_BATCHES = 2
+NUM_BATCHES = 10
 OBST = True
 if OBST:
     map_name = MAPS_OBST[map_size]

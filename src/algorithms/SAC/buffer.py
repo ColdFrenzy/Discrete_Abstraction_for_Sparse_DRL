@@ -9,7 +9,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class EpisodicBuffer:
-    def __init__(self, env_params, capacity=int(1e4), max_timesteps=300, sample_func=None):
+    def __init__(self, env_params, capacity=100000, max_timesteps=300, sample_func=None):
         """Create a replay buffer.
         Args:
             env_params (dict): Environment parameters.

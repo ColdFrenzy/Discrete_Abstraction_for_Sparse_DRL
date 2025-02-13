@@ -6,14 +6,19 @@ import imageio
 import numpy as np
 import pygame
 import torch
+import gymnasium as gym
+from gymnasium import error
+
 
 from gymnasium.core import Env
-from gymnasium.spaces import Box
+from gymnasium.spaces import Box, Dict
+from typing import Optional
 from pygame.image import load
 from pygame.transform import scale
 from src.utils.paths import IMAGE_DIR, EPISODES_DIR
 
 from src.definitions import RewardType, TransitionMode
+from src.environments.single_agent.cont_uav_env import ContinuousUAV
 
 from src.utils.utils import parse_map_emoji
 
@@ -22,7 +27,7 @@ from src.utils.paths import QTABLE_DIR
 SEED = 13
 
 
-class ContinuousUAV(Env):
+class ContinuousUAVSb3(ContinuousUAV):
     """
     The UAVEnv environment is a simple gridworld MDP with a start state, a
     goal state, and holes. For simplicity, the map is assumed to be a squared
@@ -31,16 +36,6 @@ class ContinuousUAV(Env):
     The agent can move in the two-dimensional grid with continuous velocities.
     Positive y is downwards, positive x is to the right.
     """
-
-    observation: np.ndarray
-    start_obs: np.ndarray
-    action: np.ndarray
-    reward: float
-    prev_observation: np.ndarray
-    prev_action: np.ndarray
-    num_steps: int
-    trajectory: list
-
     def __init__(
         self,
         map_name: str = "6x6",
@@ -54,94 +49,73 @@ class ContinuousUAV(Env):
         is_rendered: bool = False,
         is_display: bool = True,
     ):
-        self.map_name = map_name
-        self.OBST = OBST
-        self.agent_name = agent_name
-        self.reward_type = reward_type
-        self.is_slippery = is_slippery
-        self.is_rendered = is_rendered
-        self.transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
-
-        # Grid Topology
-        self.holes, self.goals = parse_map_emoji(self.map_name)
-        self.size = size
-        self.num_goals = len(self.goals)
-        self.grid_height = self.size
-        self.grid_width = self.size
-        self._cell_size = 100
-        self.agent_initial_pos = agent_initial_pos
-        self.prev_cell = self.frame2matrix(agent_initial_pos)
+        super().__init__(
+            self,
+            map_name: map_name,
+            agent_name: agent_name,
+            size: size,
+            agent_initial_pos: agent_initial_pos,
+            OBST: OBST,
+            reward_type: reward_type,
+            max_episode_steps: max_episode_steps,
+            is_slippery: is_slippery,
+            is_rendered: is_rendered,
+            is_display: is_display,
+        )
 
         # Environment parameters
-        self.goal = np.array(list(self.goals.values())[0])
-        self.observation_space = Box(low=0, high=self.size, shape=(2,))
-        self.action_space = Box(low=-0.4, high=0.4, shape=(2,))
+        self.observation_space = Dict({
+            'observation': Box(low=0, high=self.size, shape=(2,),  dtype=np.float32),
+            'achieved_goal': Box(low=0, high=self.size, shape=(2,),  dtype=np.float32),
+            'desired_goal': Box(low=0, high=self.size, shape=(2,),  dtype=np.float32),
+        })
 
-        # Reward related stuff
-        self.max_distance = np.linalg.norm(np.array([self.size, self.size]))
-        self.reward_range = Box(low=-self.max_distance, high=0, shape=(1,))
-        self._max_episode_steps = max_episode_steps
 
-        # Rendering stuff
-        self.is_pygame_initialized = False
-        self.trajectory = []
-        self.frames = []
-        self.is_display = is_display
-        if self.is_rendered:
-            self.init_render()
+    def compute_reward(self, achieved_goal, desired_goal, info):
+        """Compute the step reward. This externalizes the reward function and makes
+        it dependent on a desired goal and the one that was achieved. If you wish to include
+        additional rewards that are independent of the goal, you can include the necessary values
+        to derive it in 'info' and compute it accordingly.
 
-        # Load Q-table
-        if self.reward_type == RewardType.model:
-            self.values = self.load_values()
+        Args:
+            achieved_goal (object): the goal that was achieved during execution
+            desired_goal (object): the desired goal that we asked the agent to attempt to achieve
+            info (dict): an info dictionary with additional information
 
-    def reward_function(self, obs: np.ndarray, desired_goal: np.ndarray = None, info: dict = None) -> Tuple[float, bool]:
-        terminated = False
-        truncated = False
+        Returns:
+            float: The reward that corresponds to the provided achieved goal w.r.t. to the desired
+            goal. Note that the following should always hold true:
+
+                ob, reward, terminated, truncated, info = env.step()
+                assert reward == env.compute_reward(ob['achieved_goal'], ob['desired_goal'], info)
+        """
+        
         reward = 0
-        log = None
-        if desired_goal is None:
-            desired_goal = self.goal
+        desired_goal_cell = self.frame2grid()
         # Check for wall 
-        if obs[0] <= 0 or obs[0] >= self.size:
-            obs[0] = np.clip(obs[0], 0.05, self.size - 0.05)
+        if achieved_goal[0] <= 0 or achieved_goal[0] >= self.size:
             reward = -1
-        if obs[1] <= 0 or obs[1] >= self.size:
-            obs[1] = np.clip(obs[1], 0.05, self.size - 0.05)
-            reward = -1
-
-        if self.reward_type == RewardType.dense:
-            goal_distance = np.linalg.norm(obs - self.grid2frame(self.goal))
-            reward += -goal_distance
-        elif self.reward_type == RewardType.model:
-            i, j = self.frame2matrix(obs)
-            # if any(self.prev_cell != np.array([i, j])):
-            #     self.prev_cell = np.array([i, j])
-            reward += self.values[i, j] # / np.max(self.values)
-            
+        if achieved_goal[1] <= 0 or achieved_goal[1] >= self.size:
+            reward = -1     
 
         # Check for successful termination
-        if self.is_inside_cell(obs, desired_goal):
-            log = "GOAL REACHED"
-            if self.reward_type != RewardType.model:
-                reward += 10
-            terminated = True
+        if self.is_inside_cell(achieved_goal, desired_goal_cell):
+            reward += 10
 
-
-        # Check for maximum steps termination
-        if self.num_steps >= self._max_episode_steps:
-            truncated = True
-            log = "MAX STEPS REACHED"
 
         # Check for failure termination
         for hole in self.holes:
-            if self.is_inside_cell(obs, hole):
-                truncated = True
-                if self.reward_type != RewardType.model:
-                    reward = -10
+            if self.is_inside_cell(achieved_goal, hole):
+
                 log = "HOLE"
                 break
 
-        return obs, reward, terminated, truncated, log
+        return reward
+
+
+        raise NotImplementedError
+
+
 
     def reward_function_batch(self, obs: torch.tensor, desired_goal: torch.tensor, info: dict = None) -> Tuple[float, bool]:
         # obs size [batch_size, 2]
@@ -157,6 +131,7 @@ class ContinuousUAV(Env):
                 obs[i, 1] = np.clip(obs[i, 1], 0.05, self.size - 0.05)
                 step_reward = -1
             
+
             # check for goal
             if self.is_inside_cell(obs[i], desired_goal[i]):
                 log = "GOAL REACHED"
@@ -206,15 +181,32 @@ class ContinuousUAV(Env):
 
     def reset(self) -> Tuple[np.ndarray, dict]:
         super().reset(seed=SEED)
+        # Enforce that each GoalEnv uses a Goal-compatible observation space.
+        if not isinstance(self.observation_space, gym.spaces.Dict):
+            raise error.Error(
+                "GoalEnv requires an observation space of type gym.spaces.Dict"
+            )
         self.num_steps = 0
-        self.observation = np.array(
-            self.agent_initial_pos
-        )  
+        for key in ["observation", "achieved_goal", "desired_goal"]:
+            if key not in self.observation_space.spaces:
+                raise error.Error(
+                    'GoalEnv requires the "{}" key to be part of the observation dictionary.'.format(
+                        key
+                    )
+                )
+        observation = {
+            'observation': self.observation.copy(),
+            'achieved_goal': self.observation.copy(),
+            'desired_goal': self.goal.copy(),
+        }
+    
         self.start_obs = self.observation
         self.trajectory = []
         self.frames = []
         self.reward = 0
-        return self.observation, {}
+        return observation
+
+
 
     def is_inside_cell(self, pos: np.ndarray, cell: np.ndarray) -> bool:
         """
@@ -459,3 +451,48 @@ class ContinuousUAV(Env):
 
 
 
+
+    def compute_terminated(self, achieved_goal, desired_goal, info):
+        """Compute the step termination. Allows to customize the termination states depending on the
+        desired and the achieved goal. If you wish to determine termination states independent of the goal,
+        you can include necessary values to derive it in 'info' and compute it accordingly. The envirtonment reaches
+        a termination state when this state leads to an episode ending in an episodic task thus breaking .
+        More information can be found in: https://farama.org/New-Step-API#theory
+
+        Termination states are
+
+        Args:
+            achieved_goal (object): the goal that was achieved during execution
+            desired_goal (object): the desired goal that we asked the agent to attempt to achieve
+            info (dict): an info dictionary with additional information
+
+        Returns:
+            bool: The termination state that corresponds to the provided achieved goal w.r.t. to the desired
+            goal. Note that the following should always hold true:
+
+                ob, reward, terminated, truncated, info = env.step()
+                assert terminated == env.compute_terminated(ob['achieved_goal'], ob['desired_goal'], info)
+        """
+        raise NotImplementedError
+
+
+    def compute_truncated(self, achieved_goal, desired_goal, info):
+        """Compute the step truncation. Allows to customize the truncated states depending on the
+        desired and the achieved goal. If you wish to determine truncated states independent of the goal,
+        you can include necessary values to derive it in 'info' and compute it accordingly. Truncated states
+        are those that are out of the scope of the Markov Decision Process (MDP) such as time constraints in a
+        continuing task. More information can be found in: https://farama.org/New-Step-API#theory
+
+        Args:
+            achieved_goal (object): the goal that was achieved during execution
+            desired_goal (object): the desired goal that we asked the agent to attempt to achieve
+            info (dict): an info dictionary with additional information
+
+        Returns:
+            bool: The truncated state that corresponds to the provided achieved goal w.r.t. to the desired
+            goal. Note that the following should always hold true:
+
+                ob, reward, terminated, truncated, info = env.step()
+                assert truncated == env.compute_truncated(ob['achieved_goal'], ob['desired_goal'], info)
+        """
+        raise NotImplementedError
