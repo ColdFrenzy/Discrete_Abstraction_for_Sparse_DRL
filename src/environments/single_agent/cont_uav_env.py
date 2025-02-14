@@ -73,8 +73,6 @@ class ContinuousUAV(Env):
         self.prev_cell = self.frame2matrix(agent_initial_pos)
 
         # Environment parameters
-        self.goal_idx = 0
-        self.old_goal = np.array(list(self.goals.values())[0])
         self.goal = np.array(list(self.goals.values())[0])
         self.observation_space = Box(low=0, high=self.size, shape=(2,))
         self.action_space = Box(low=-0.4, high=0.4, shape=(2,))
@@ -127,14 +125,8 @@ class ContinuousUAV(Env):
             log = "GOAL REACHED"
             if self.reward_type != RewardType.model:
                 reward += 10
-            self.old_goal = self.goal
-            self.goal_idx += 1
-            if self.goal_idx == self.num_goals:
-                terminated = True
-                self.goal_idx = 0
-            else:
-                goal_key = list(self.goals.keys())[self.goal_idx]
-                self.goal = np.array(self.goals[goal_key])
+            terminated = True
+
 
         # Check for maximum steps termination
         if self.num_steps >= self._max_episode_steps:
@@ -214,8 +206,8 @@ class ContinuousUAV(Env):
             {"log": log},
         )
 
-    def reset(self) -> Tuple[np.ndarray, dict]:
-        super().reset(seed=SEED)
+    def reset(self, seed=SEED) -> Tuple[np.ndarray, dict]:
+        super().reset(seed=seed)
         self.num_steps = 0
         self.observation = np.array(
             self.agent_initial_pos
