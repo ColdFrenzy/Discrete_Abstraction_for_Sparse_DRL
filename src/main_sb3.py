@@ -1,18 +1,19 @@
 import os
+import torch
 from src.definitions import RewardType, TransitionMode
 from src.environments.maps import MAPS_FREE
 from src.environments.maps import MAPS_OBST
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3 import HerReplayBuffer, DDPG, DQN, SAC, TD3
 from stable_baselines3.her.goal_selection_strategy import GoalSelectionStrategy
-from src.environments.single_agent.cont_uav_env_sb3 import ContinuousUAVSb3
+from src.environments.single_agent.cont_uav_env_sb3 import ContinuousUAVSb3HerWrapper
 
 model_class = SAC  # works also with SAC, DDPG and TD3
 
 os.environ["IS_RENDER"] = "False"
 env_reward_type = RewardType.sparse # or model, or sparse
 is_slippery = False
-map_size = 10
+map_size = 3
 MAX_EPISODE_STEPS = 400
 NUM_BATCHES = 10
 OBST = True
@@ -22,7 +23,7 @@ else:
     map_name = MAPS_FREE[map_size]
 
 
-env = ContinuousUAVSb3(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = [0.5, map_size-0.5], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False)
+env = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = [0.5, map_size-0.5], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False)
 # Available strategies (cf paper): future, final, episode
 
 
@@ -30,12 +31,12 @@ env = ContinuousUAVSb3(map_name =  map_name, agent_name="a1", size = map_size, m
 # check_env(env)
 
 goal_selection_strategy = "future" # equivalent to GoalSelectionStrategy.FUTURE
-
+device = "cuda" if torch.cuda.is_available() else "cpu"
 # Initialize the model
-model = model_class(
+model_SAC_HER = model_class(
     "MultiInputPolicy",
     env,
-    replay_buffer_class=HerReplayBuffer,
+    replay_buffer_class=HerReplayBuffer, # Comment this line to use the default replay buffer
     learning_starts=1e4,
     # Parameters for HER
     replay_buffer_kwargs=dict(
@@ -44,11 +45,25 @@ model = model_class(
     ),
     tensorboard_log="./her_sac_uav_tensorboard/",
     verbose=2,
+    device=device,
 )
+
+model_SAC = model_class(
+    "MultiInputPolicy",
+    env,
+    learning_starts=1e4,
+    tensorboard_log="./sac_uav_tensorboard/",
+    verbose=2,
+    device=device,
+)
+
+
+model = model_SAC
+
 
 # Train the model
 print("start learning")
-model.learn(100000)
+model.learn(1000000)
 print("learning done")
 model.save("./her_uav_env")
 # Because it needs access to `env.compute_reward()`

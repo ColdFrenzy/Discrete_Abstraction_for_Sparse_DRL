@@ -27,7 +27,7 @@ from src.utils.paths import QTABLE_DIR
 SEED = 13
 
 
-class ContinuousUAVSb3(ContinuousUAV):
+class ContinuousUAVSb3HerWrapper(ContinuousUAV):
     """
     The UAVEnv environment is a simple gridworld MDP with a start state, a
     goal state, and holes. For simplicity, the map is assumed to be a squared
