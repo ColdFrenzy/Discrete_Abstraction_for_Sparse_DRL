@@ -97,9 +97,9 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
                 desired_goal_cell = self.frame2grid(desired_goal[i])
                 # Check for wall 
                 if achieved_goal[i][0] <= 0 or achieved_goal[i][0] >= self.size:
-                    reward = -1
+                    reward += -1
                 if achieved_goal[i][1] <= 0 or achieved_goal[i][1] >= self.size:
-                    reward = -1     
+                    reward += -1     
 
                 # Check for successful termination
                 if self.is_inside_cell(achieved_goal[i], desired_goal_cell):
@@ -108,7 +108,7 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
                 # Check for failure termination
                 for hole in self.holes:
                     if self.is_inside_cell(achieved_goal[i], hole):
-                        reward = -10
+                        reward += -10
                         break
                 batch_reward.append(reward)
             return np.array(batch_reward)
@@ -118,9 +118,9 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
             desired_goal_cell = self.frame2grid(desired_goal)
             # Check for wall 
             if achieved_goal[0] <= 0 or achieved_goal[0] >= self.size:
-                reward = -1
+                reward += -1
             if achieved_goal[1] <= 0 or achieved_goal[1] >= self.size:
-                reward = -1     
+                reward += -1     
 
             # Check for successful termination
             if self.is_inside_cell(achieved_goal, desired_goal_cell):
@@ -129,7 +129,7 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
             # Check for failure termination
             for hole in self.holes:
                 if self.is_inside_cell(achieved_goal, hole):
-                    reward = -10
+                    reward += -10
                     break
             
             return reward
@@ -140,25 +140,9 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
         """
         The agent takes a step in the environment.
         """
-        self.prev_observation = self.observation
-        action = np.clip(
-            action, self.action_space.low, self.action_space.high
-        )  # Ensure action is within bounds
-        # actions right np.array([4., 0.]), left np.array([-4., 0.]), up np.array([0., 4.]), down np.array([0., -4.])
-        new_x = self.observation[0] + action[0]
-        new_y = self.observation[1] + action[1]
-
-        if self.is_slippery:
-            new_x += np.random.normal(0, 0.01)
-            new_y += np.random.normal(0, 0.01)
-
-        self.observation, self.reward, terminated, truncated, log = self.reward_function(
-            np.array([new_x, new_y])
-        )
+        self.observation, self.reward, terminated, truncated, log = super().step(action)
 
         reward = self.reward
-        self.trajectory.append(self.observation)
-        self.num_steps += 1
 
         obs_goal = {
             'observation': self.observation.copy().astype(np.float32),
@@ -171,7 +155,7 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
             reward,
             terminated,
             truncated,
-            {"log": log},
+            log,
         )
 
     def render(self, mode="human"):

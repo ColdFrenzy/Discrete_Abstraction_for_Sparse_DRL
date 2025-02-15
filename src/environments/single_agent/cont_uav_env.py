@@ -36,7 +36,6 @@ class ContinuousUAV(Env):
     start_obs: np.ndarray
     action: np.ndarray
     reward: float
-    prev_observation: np.ndarray
     prev_action: np.ndarray
     num_steps: int
     trajectory: list
@@ -179,7 +178,6 @@ class ContinuousUAV(Env):
         """
         The agent takes a step in the environment.
         """
-        self.prev_observation = self.observation
         action = np.clip(
             action, self.action_space.low, self.action_space.high
         )  # Ensure action is within bounds
