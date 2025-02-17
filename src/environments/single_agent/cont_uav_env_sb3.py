@@ -24,7 +24,6 @@ from src.utils.utils import parse_map_emoji
 
 from src.utils.paths import QTABLE_DIR
 
-SEED = 13
 
 
 class ContinuousUAVSb3HerWrapper(ContinuousUAV):
@@ -48,6 +47,7 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
         is_slippery: bool = False,
         is_rendered: bool = False,
         is_display: bool = True,
+        seed: int = 13,
     ):
         super().__init__(
             map_name=map_name,
@@ -61,7 +61,7 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
             is_rendered=is_rendered,
             is_display=is_display,
         )
-
+        self.seed = seed
         # Environment parameters
         self.observation_space = Dict({
             'observation': Box(low=0, high=self.size, shape=(2,),  dtype=np.float32),
@@ -97,19 +97,21 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
                 desired_goal_cell = self.frame2grid(desired_goal[i])
                 # Check for wall 
                 if achieved_goal[i][0] <= 0 or achieved_goal[i][0] >= self.size:
-                    reward += -1
-                if achieved_goal[i][1] <= 0 or achieved_goal[i][1] >= self.size:
-                    reward += -1     
-
-                # Check for successful termination
-                if self.is_inside_cell(achieved_goal[i], desired_goal_cell):
-                    reward += 10
+                    reward = -1
+                elif achieved_goal[i][1] <= 0 or achieved_goal[i][1] >= self.size:
+                    reward = -1     
 
                 # Check for failure termination
-                for hole in self.holes:
-                    if self.is_inside_cell(achieved_goal[i], hole):
-                        reward += -10
-                        break
+                elif self.holes is not None:
+                    for hole in self.holes:
+                        if self.is_inside_cell(achieved_goal[i], hole):
+                            reward = -10
+                            break
+                # Check for successful termination
+                elif self.is_inside_cell(achieved_goal[i], desired_goal_cell):
+                    reward = 10
+
+                
                 batch_reward.append(reward)
             return np.array(batch_reward)
                 
@@ -118,20 +120,20 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
             desired_goal_cell = self.frame2grid(desired_goal)
             # Check for wall 
             if achieved_goal[0] <= 0 or achieved_goal[0] >= self.size:
-                reward += -1
-            if achieved_goal[1] <= 0 or achieved_goal[1] >= self.size:
-                reward += -1     
-
-            # Check for successful termination
-            if self.is_inside_cell(achieved_goal, desired_goal_cell):
-                reward += 10
+                reward = -1
+            elif achieved_goal[1] <= 0 or achieved_goal[1] >= self.size:
+                reward = -1     
 
             # Check for failure termination
-            for hole in self.holes:
-                if self.is_inside_cell(achieved_goal, hole):
-                    reward += -10
-                    break
-            
+            if self.holes is not None:
+                for hole in self.holes:
+                    if self.is_inside_cell(achieved_goal, hole):
+                        reward = -10
+                        break
+            # Check for successful termination
+            elif self.is_inside_cell(achieved_goal, desired_goal_cell):
+                reward = 10
+
             return reward
 
 
@@ -140,13 +142,12 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
         """
         The agent takes a step in the environment.
         """
-        self.observation, self.reward, terminated, truncated, log = super().step(action)
+        observation, reward, terminated, truncated, log = super().step(action)
 
-        reward = self.reward
 
         obs_goal = {
-            'observation': self.observation.copy().astype(np.float32),
-            'achieved_goal': self.observation.copy().astype(np.float32),
+            'observation': observation.copy().astype(np.float32),
+            'achieved_goal': observation.copy().astype(np.float32),
             'desired_goal': self.goal.copy().astype(np.float32),
         }
         # new_obs, rewards, dones, infos
@@ -161,14 +162,14 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
     def render(self, mode="human"):
         super().render()
 
-    def reset(self, seed=SEED) -> dict:
+    def reset(self, seed=None) -> dict:
+        seed = seed if seed is not None else self.seed
         super().reset(seed=seed)
         # Enforce that each GoalEnv uses a Goal-compatible observation space.
         if not isinstance(self.observation_space, gym.spaces.Dict):
             raise error.Error(
                 "GoalEnv requires an observation space of type gym.spaces.Dict"
             )
-        self.num_steps = 0
         for key in ["observation", "achieved_goal", "desired_goal"]:
             if key not in self.observation_space.spaces:
                 raise error.Error(
@@ -182,10 +183,6 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
             'desired_goal': self.goal.copy().astype(np.float32),
         }
     
-        self.start_obs = self.observation
-        self.trajectory = []
-        self.frames = []
-        self.reward = 0.0
         return observation, {}
 
 
@@ -209,6 +206,9 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
                 ob, reward, terminated, truncated, info = env.step()
                 assert truncated == env.compute_truncated(ob['achieved_goal'], ob['desired_goal'], info)
         """
+        if self.num_steps >= self.max_episode_steps:
+            return True
+
         return False
     
 
@@ -233,4 +233,7 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
                 ob, reward, terminated, truncated, info = env.step()
                 assert terminated == env.compute_terminated(ob['achieved_goal'], ob['desired_goal'], info)
         """
+        if self.is_inside_cell(achieved_goal, self.goal):
+            return True
+
         return False

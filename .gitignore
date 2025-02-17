@@ -132,4 +132,3 @@ src/algorithms/SAC/models/
 src/weights/
 src/episodes/
 .vscode/launch.json
-her_sac_uav_tensorboard/
