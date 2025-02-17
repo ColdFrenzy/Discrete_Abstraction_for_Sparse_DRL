@@ -236,7 +236,7 @@ class ContinuousUAV(Env):
         """
         Load the Q-table from the file system.
         """
-        qtable = np.load(f"{QTABLE_DIR}/{self.transition_mode.name}/qtable_{self.size}_obstacles_{self.OBST}.npz")[self.agent_name]
+        qtable = np.load(f"{QTABLE_DIR}/{self.transition_mode.name}/single_agent/qtable_{self.size}_obstacles_{self.OBST}.npz")[self.agent_name]
         return qtable
 
     def frame2matrix(self, frame_pos: np.ndarray) -> np.ndarray:

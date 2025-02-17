@@ -180,7 +180,7 @@ def compute_value_function(map_name, size, OBST, num_episodes = 10000, gamma: fl
     # Avvolgi l'ambiente con il wrapper RMEnvironmentWrapper
     rm_env = RMEnvironmentWrapper(env, [a1, a3]) # aggiungici a3 se vuoi averne 2 nella lista
 
-    rmax_1 = QLearning(
+    alg_1 = QLearning(
         gamma=gamma,
         action_selection='greedy',
         learning_rate=None,
@@ -190,7 +190,7 @@ def compute_value_function(map_name, size, OBST, num_episodes = 10000, gamma: fl
         state_space_size=env.grid_width * env.grid_height * RM_3.numbers_state(),
         action_space_size=4,
     )
-    rmax_3 = QLearning(
+    alg_3 = QLearning(
         gamma=gamma,
         action_selection='greedy',
         learning_rate=None,
@@ -201,8 +201,8 @@ def compute_value_function(map_name, size, OBST, num_episodes = 10000, gamma: fl
         action_space_size=4,
     )
 
-    a1.set_learning_algorithm(rmax_1)
-    a3.set_learning_algorithm(rmax_3)
+    a1.set_learning_algorithm(alg_1)
+    a3.set_learning_algorithm(alg_3)
     
     train(rm_env, num_episodes)
 
@@ -336,14 +336,14 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
     a1.add_state_encoder(StateEncoderUAV(a1))
 
     
-    a3 = AgentRL("a3", env)
-    a3.set_initial_position(size - 1, size - 1)  # Aggiungo la pos anche allo stato dell'agente
-    a3.add_state_encoder(StateEncoderUAV(a3))
+    # a3 = AgentRL("a3", env)
+    # a3.set_initial_position(size - 1, size - 1)  # Aggiungo la pos anche allo stato dell'agente
+    # a3.add_state_encoder(StateEncoderUAV(a3))
 
     # Adding actions
     for action in env.get_actions():
         a1.add_action(action)
-        a3.add_action(action)
+        # a3.add_action(action)
 
     # Reward Machine States (TODO: generalize this)
     state_start = "state0"
@@ -366,8 +366,8 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
     env.add_agent(a1)
 
     # Crea la RM
-    RM_3 = RewardMachine(transitions, event_detector)
-    a3.set_reward_machine(RM_1)
+    # RM_3 = RewardMachine(transitions, event_detector)
+    # a3.set_reward_machine(RM_1)
     # env.add_agent(a3)
 
     # Avvolgi l'ambiente con il wrapper RMEnvironmentWrapper
@@ -376,24 +376,26 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
     # Avvolgi l'ambiente con il wrapper RMEnvironmentWrapper
     # rm_env = RMEnvironmentWrapper(env, [a3])
 
-    rmax_1 = RMax(
+    alg_1 = QLearning(
+        gamma=gamma,
+        action_selection='greedy',
+        learning_rate=None,
+        epsilon_start=1.0,
+        epsilon_end=0.2,
+        epsilon_decay=0.99,
         state_space_size=env.grid_width * env.grid_height * RM_1.numbers_state(),
         action_space_size=4,
-        s_a_threshold=500,
-        max_reward=10,
-        gamma=gamma,
-        epsilon_one=0.99,
     )
-    rmax_3 = RMax(
-        state_space_size=env.grid_width * env.grid_height * RM_3.numbers_state(),
-        action_space_size=4,
-        s_a_threshold=500,
-        max_reward=10,
-        gamma=gamma,
-        epsilon_one=0.99,
-    )
-    a1.set_learning_algorithm(rmax_1)
-    a3.set_learning_algorithm(rmax_3)
+    # alg_3 = QLearning(
+    #     state_space_size=env.grid_width * env.grid_height * RM_3.numbers_state(),
+    #     action_space_size=4,
+    #     s_a_threshold=500,
+    #     max_reward=10,
+    #     gamma=gamma,
+    #     epsilon_one=0.99,
+    # )
+    a1.set_learning_algorithm(alg_1)
+    # a3.set_learning_algorithm(alg_3)
     
     train(rm_env, num_episodes)
 
@@ -403,19 +405,21 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
         for agent in rm_env.agents:
             print(agent.name)
             for i in range(agent.get_reward_machine().numbers_state() - 1):
-                max_qtable: np.ndarray = rmax_1.q_table.max(axis=1)
+                max_qtable: np.ndarray = alg_1.q_table.max(axis=1)
                 reshaped_qtable = max_qtable.reshape((size, size, 2))
                 qtable[agent.name] = reshaped_qtable[:, :, i]
                 
-                max_counts: np.ndarray = rmax_1.s_a_counts.max(axis=1)
-                reshaped_counts = max_counts.reshape((size, size, 2))
-                counts = reshaped_counts[:, :, i]
+                # max_counts: np.ndarray = alg_3.s_a_counts.max(axis=1)
+                # reshaped_counts = max_counts.reshape((size, size, 2))
+                # counts = reshaped_counts[:, :, i]
                 
-                for i in range(counts.shape[0]):
-                    for j in range(counts.shape[1]):
-                        if counts[i, j] < 1 and (j, i) not in goals.values():
-                            qtable[agent.name][i, j] = 0.0
-                            
-                transition_mode = "stochastic" if stochastic else "deterministic" # TODO: hardcoded
-                os.makedirs(f"{QTABLE_DIR}/{transition_mode}/single_agent", exist_ok=True)
-                np.savez_compressed(f"{QTABLE_DIR}/{transition_mode}/single_agent/qtable_{size}_obstacles_{OBST}.npz", **qtable)
+                # for i in range(counts.shape[0]):
+                #     for j in range(counts.shape[1]):
+                #         if counts[i, j] < 1 and (j, i) not in goals.values():
+                #             qtable[agent.name][i, j] = 0.0
+                for (x,y) in goals.values():
+                    qtable[agent.name][y, x] = 15.    
+    
+        transition_mode = "stochastic" if stochastic else "deterministic" # TODO: hardcoded
+        os.makedirs(f"{QTABLE_DIR}/{transition_mode}/single_agent", exist_ok=True)
+        np.savez_compressed(f"{QTABLE_DIR}/{transition_mode}/single_agent/qtable_{size}_obstacles_{OBST}.npz", **qtable)
