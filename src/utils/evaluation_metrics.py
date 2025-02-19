@@ -2,6 +2,48 @@ import numpy as np
 import copy
 import wandb
 import os
+from stable_baselines3.common.callbacks import BaseCallback
+from collections import deque
+
+class WinRateCallback(BaseCallback):
+    def __init__(self, window_size=50, verbose=0):
+        super().__init__(verbose)
+        self.window_size = window_size  # La dimensione della finestra per il win_rate
+        self.wins = deque(maxlen=window_size)  # La finestra degli ultimi episodi
+        self.episode_reward = 0  # Puoi usare questo per memorizzare il reward cumulativo dell'episodio
+        self.episode_done = False  # Flag per determinare se l'episodio è finito
+
+    def _on_step(self) -> bool:
+        """
+        Questa funzione viene chiamata ad ogni passo dell'episodio.
+        La logica per determinare se l'episodio è finito (terminato o troncato)
+        viene eseguita solo quando `done` è True.
+        """
+        # Accedi a terminated e truncated
+        terminated = self.locals['dones'][0]
+        truncated = self.locals['infos'][0].get('TimeLimit.truncated', False)
+
+        if terminated or truncated:
+            win = self.locals['infos'][0]['log'] == 'GOAL REACHED'
+            # Se l'episodio è finito, calcoliamo il risultato (vittoria/sconfitta)
+            self.wins.append(1 if win else 0)
+
+            # Calcola il win rate come la media degli ultimi n episodi
+            win_rate = sum(self.wins) / len(self.wins) if self.wins else 0
+            
+            # Logga il win rate su TensorBoard
+            self.logger.record("custom/win_rate", win_rate)
+            
+            # Reset della variabile reward per il prossimo episodio
+        #     self.episode_reward = 0
+        
+        # # Aggiungi il reward dell'episodio in corso (aggiornato ad ogni passo)
+        # if terminated or truncated:
+        #     self.episode_done = True
+        # else:
+        #     self.episode_reward += self.locals['rewards'][0]
+
+        return True
 
 
 def calcola_media_mobile(valori, finestra):

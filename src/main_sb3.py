@@ -11,6 +11,7 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3 import HerReplayBuffer, DDPG, DQN, SAC, TD3
 from stable_baselines3.her.goal_selection_strategy import GoalSelectionStrategy
 from src.environments.single_agent.cont_uav_env_sb3 import ContinuousUAVSb3HerWrapper
+from src.utils.evaluation_metrics import WinRateCallback
 
 
 def main(alg="SAC", map_size=5, seed=13):
@@ -22,11 +23,11 @@ def main(alg="SAC", map_size=5, seed=13):
         env_reward_type = RewardType.sparse # or model, or sparse
 
 
-
+    custom_callback = WinRateCallback()
     is_slippery = False
     map_size = map_size
     MAX_EPISODE_STEPS = 400
-    NUM_EPISODES_DISCRETE = 20000
+    NUM_EPISODES_DISCRETE = 50000 # 20000
     OBST = True
     if OBST:
         map_name = MAPS_OBST[map_size]
@@ -82,11 +83,12 @@ def main(alg="SAC", map_size=5, seed=13):
             tensorboard_log=f"./sac_hr_uav_tensorboard/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
+            gamma=0.1,
         )
 
     # Train the model
     print("start learning")
-    model.learn(100000)
+    model.learn(100000, callback=custom_callback)
     print("learning done")
     save_path = f"./models/{alg}_{map_size}x{map_size}_{seed}"
     model.save(save_path)
@@ -94,20 +96,10 @@ def main(alg="SAC", map_size=5, seed=13):
     # HER must be loaded with the env
     model = model_class.load(save_path, env=env)
 
-    print("start evaluating")
-    obs, info = env.reset()
-    for _ in range(100):
-        action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, _ = env.step(action)
-        if terminated or truncated:
-            obs, info = env.reset()
-
-    print("evaluation done")
-
 
 if __name__ == "__main__":
-    algos = ["SAC_HR"]
-    maps = [3, 5, 10]
+    algos = ["SAC", "SACHER"]
+    maps = [10]
     seeds = [13, 42, 69]
 
     for alg in algos:

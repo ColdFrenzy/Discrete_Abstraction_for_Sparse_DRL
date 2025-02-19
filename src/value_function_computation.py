@@ -405,7 +405,7 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
         for agent in rm_env.agents:
             print(agent.name)
             for i in range(agent.get_reward_machine().numbers_state() - 1):
-                max_qtable: np.ndarray = alg_1.q_table.max(axis=1)
+                max_qtable: np.ndarray = agent.get_learning_algorithm().q_table.max(axis=1)
                 reshaped_qtable = max_qtable.reshape((size, size, 2))
                 qtable[agent.name] = reshaped_qtable[:, :, i]
                 
@@ -418,7 +418,11 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
                 #         if counts[i, j] < 1 and (j, i) not in goals.values():
                 #             qtable[agent.name][i, j] = 0.0
                 for (x,y) in goals.values():
-                    qtable[agent.name][y, x] = 15.    
+                    qtable[agent.name][y, x] = 15. 
+
+                for hole in holes:
+                    x, y = hole
+                    qtable[agent.name][y, x] = 0.   
     
         transition_mode = "stochastic" if stochastic else "deterministic" # TODO: hardcoded
         os.makedirs(f"{QTABLE_DIR}/{transition_mode}/single_agent", exist_ok=True)

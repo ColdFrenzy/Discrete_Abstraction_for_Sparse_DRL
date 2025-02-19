@@ -116,11 +116,13 @@ class ContinuousUAV(Env):
             # if any(self.prev_cell != np.array([i, j])):
             #     self.prev_cell = np.array([i, j])
             reward += self.values[i, j] # / np.max(self.values)
+            # self.values[i, j] = 0. # set to zero the value of the cell visited
+            # reward += -1. # penalize the agent for moving
             
 
         # Check for successful termination
         desired_goal_cell = self.grid2frame(desired_goal)
-        if self.is_inside_cell(obs, desired_goal_cell):
+        if self.is_inside_cell(obs, desired_goal):
             log = "GOAL REACHED"
             if self.reward_type != RewardType.model:
                 reward += 10
@@ -135,7 +137,7 @@ class ContinuousUAV(Env):
         # Check for failure termination
         for hole in self.holes:
             if self.is_inside_cell(obs, hole):
-                truncated = True
+                terminated = True
                 if self.reward_type != RewardType.model:
                     reward = -10
                 log = "HOLE"
@@ -210,6 +212,8 @@ class ContinuousUAV(Env):
         self.observation = np.array(
             self.agent_initial_pos
         )  
+        if self.reward_type == RewardType.model:
+            self.values = self.load_values()
         self.start_obs = self.observation
         self.trajectory = []
         self.frames = []
@@ -371,13 +375,16 @@ class ContinuousUAV(Env):
             max_steps = self._max_episode_steps
         for step in range(max_steps):
             with torch.no_grad():
-                obs_goal = torch.cat([torch.tensor(self.observations, dtype=torch.float32), torch.tensor(self.goal, dtype=torch.float32)])
-                actions, _ = agent.actor(
-                            obs_goal, deterministic=True, with_logprob=False
+                if type(self.observations) == dict:
+                    obs_goal = self.observations
+                else:
+                    obs_goal = torch.cat([torch.tensor(self.observations, dtype=torch.float32), torch.tensor(self.goal, dtype=torch.float32)])
+                actions, _ = agent.predict(
+                            obs_goal, deterministic=True 
                         )
-            self.observations,  self.reward, terminated, truncated, _ = self.step(actions.cpu().numpy())
+            self.observations,  self.reward, terminated, truncated, _ = self.step(actions) # cpu().numpy())
             self.render()
-            if truncated:
+            if truncated or terminated:
                 break
 
 
