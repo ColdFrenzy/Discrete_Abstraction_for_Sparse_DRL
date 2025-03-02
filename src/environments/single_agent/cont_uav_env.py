@@ -113,21 +113,14 @@ class ContinuousUAV(Env):
             reward += -goal_distance
         elif self.reward_type == RewardType.model:
             i, j = self.frame2matrix(obs)
-            # if any(self.prev_cell != np.array([i, j])):
-            #     self.prev_cell = np.array([i, j])
-            reward += self.values[i, j] # / np.max(self.values)
-            # self.values[i, j] = 0. # set to zero the value of the cell visited
-            # reward += -1. # penalize the agent for moving
-            
+            reward += self.values[i, j]
 
         # Check for successful termination
-        desired_goal_cell = self.grid2frame(desired_goal)
         if self.is_inside_cell(obs, desired_goal):
             log = "GOAL REACHED"
             if self.reward_type != RewardType.model:
                 reward += 10
             terminated = True
-
 
         # Check for maximum steps termination
         if self.num_steps >= self._max_episode_steps:
@@ -183,7 +176,6 @@ class ContinuousUAV(Env):
         action = np.clip(
             action, self.action_space.low, self.action_space.high
         )  # Ensure action is within bounds
-        # actions right np.array([4., 0.]), left np.array([-4., 0.]), up np.array([0., 4.]), down np.array([0., -4.])
         new_x = self.observation[0] + action[0]
         new_y = self.observation[1] + action[1]
 
@@ -240,7 +232,7 @@ class ContinuousUAV(Env):
         """
         Load the Q-table from the file system.
         """
-        qtable = np.load(f"{QTABLE_DIR}/{self.transition_mode.name}/single_agent/qtable_{self.size}_obstacles_{self.OBST}.npz")[self.agent_name]
+        qtable = np.load(f"{QTABLE_DIR}/{self.transition_mode.name}/qtable_{self.size}_obstacles_{self.OBST}.npz")[self.agent_name]
         return qtable
 
     def frame2matrix(self, frame_pos: np.ndarray) -> np.ndarray:

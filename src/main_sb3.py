@@ -36,11 +36,10 @@ def main(alg="SAC", map_size=5, seed=13):
 
     if alg == "SAC_HR":
         transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
-        experiment_name = f"sac-{env_reward_type.name}-{map_size}-obstacles_{OBST}"
         compute_value_function_single(map_name, size=map_size, OBST=OBST, num_episodes=NUM_EPISODES_DISCRETE, gamma = 0.8, stochastic=is_slippery, save=True)
-    
-        qtable = np.load(f"{QTABLE_DIR}/{transition_mode.name}/single_agent/qtable_{map_size}_obstacles_{OBST}.npz")
-        generate_heatmaps_numbers(qtable)
+        qtable = np.load(f"{QTABLE_DIR}/{transition_mode.name}/qtable_{map_size}_obstacles_{OBST}.npz")
+        generate_heatmaps_numbers(qtable, seed)
+        
     env = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = [0.5, map_size-0.5], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
     # Available strategies (cf paper): future, final, episode
 
@@ -62,7 +61,7 @@ def main(alg="SAC", map_size=5, seed=13):
                 n_sampled_goal=4,
                 goal_selection_strategy=goal_selection_strategy,
             ),
-            tensorboard_log=f"./her_sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
+            tensorboard_log=f"./tensorboards/her_sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
         )
@@ -71,7 +70,7 @@ def main(alg="SAC", map_size=5, seed=13):
             "MultiInputPolicy",
             env,
             learning_starts=1e4,
-            tensorboard_log=f"./sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
+            tensorboard_log=f"./tensorboards/sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
         )
@@ -80,25 +79,25 @@ def main(alg="SAC", map_size=5, seed=13):
             "MultiInputPolicy",
             env,
             learning_starts=1e4,
-            tensorboard_log=f"./sac_hr_uav_tensorboard/{map_size}x{map_size}_{seed}",
+            tensorboard_log=f"./tensorboards/sac_hr_uav_tensorboard/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
             gamma=0.1,
         )
 
-    # Train the model
-    print("start learning")
-    model.learn(100000, callback=custom_callback)
-    print("learning done")
-    save_path = f"./models/{alg}_{map_size}x{map_size}_{seed}"
-    model.save(save_path)
-    # Because it needs access to `env.compute_reward()`
-    # HER must be loaded with the env
-    model = model_class.load(save_path, env=env)
+    # # Train the model
+    # print("start learning")
+    # model.learn(100000, callback=custom_callback)
+    # print("learning done")
+    # save_path = f"./models/{alg}_{map_size}x{map_size}_{seed}"
+    # model.save(save_path)
+    # # Because it needs access to `env.compute_reward()`
+    # # HER must be loaded with the env
+    # model = model_class.load(save_path, env=env)
 
 
 if __name__ == "__main__":
-    algos = ["SAC", "SACHER"]
+    algos = ["SAC_HR"]
     maps = [10]
     seeds = [13, 42, 69]
 

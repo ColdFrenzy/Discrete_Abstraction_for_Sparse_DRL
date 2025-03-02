@@ -73,27 +73,29 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
     # Initialize figure for plotting
     plt.figure(figsize=(10, 6))
     for algorithm_name, log_dir in tensorboard_path.items():
+        
         all_rewards = []
         all_steps = []
         run_dirs = [os.path.join(log_dir, run) for run in os.listdir(log_dir)]
-
+        
+        print(run_dirs)
+        exit()
+        
         # Read the event files from each run directory
         for run in run_dirs:
             event_acc = event_accumulator.EventAccumulator(run)
             event_acc.Reload()
 
-
             # Extract step and reward values
-            steps = [event.step for event in event_acc.Scalars('rollout/ep_rew_mean')]
-            reward_values = [event.value for event in event_acc.Scalars('rollout/ep_rew_mean')]
-
+            steps = [event.step for event in event_acc.Scalars('custom/win_rate')]
+            reward_values = [event.value for event in event_acc.Scalars('custom/win_rate')]
+            
             # Store rewards of each run
             all_steps.append(np.array(steps))
             all_rewards.append(np.array(reward_values))
 
         # Find the unique set of steps across all runs
         all_unique_steps = np.unique(np.concatenate(all_steps))
-
 
         aligned_rewards = []
         for steps, rewards in zip(all_steps, all_rewards):
@@ -110,19 +112,18 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
         # Compute the mean and std across all runs (along axis=0 corresponds to different seeds/runs)
         mean_rewards = np.mean(aligned_rewards, axis=0)
         std_rewards = np.std(aligned_rewards, axis=0)
-
     
         plt.plot(all_unique_steps, mean_rewards, label=f"{algorithm_name}", lw=2)
         plt.fill_between(all_unique_steps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.2, )
     
     plt.xlabel('Steps')
-    plt.ylabel('Reward')
+    plt.ylabel('Win Rate')
     plt.legend()
     plt.show()
 
-
     # Save the plot to a file (e.g., PNG)
-    plt.savefig(save_path)
+    # os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    # plt.savefig(save_path)
 
     # Close the plot to free up memory
     plt.close()

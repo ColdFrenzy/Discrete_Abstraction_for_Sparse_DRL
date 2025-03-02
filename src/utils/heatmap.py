@@ -189,7 +189,7 @@ def generate_heatmaps_for_agents_time(agents, q_tables_data, grid_dims, max_time
         )
 
 
-def generate_heatmaps_numbers(qtable: Dict[str, np.ndarray], save_dir: str = None):
+def generate_heatmaps_numbers(qtable: Dict[str, np.ndarray], map_size: int = None, seed: int = None):
     """
     Generate and save heatmaps for the Q-tables of all agents.
 
@@ -198,8 +198,7 @@ def generate_heatmaps_numbers(qtable: Dict[str, np.ndarray], save_dir: str = Non
         save_dir (str): Directory to save the heatmaps.
     """
     # Crea la directory di salvataggio se non esiste
-    if save_dir is None:
-        save_dir = HEATMAPS_DIR
+    save_dir = HEATMAPS_DIR
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
@@ -231,7 +230,7 @@ def generate_heatmaps_numbers(qtable: Dict[str, np.ndarray], save_dir: str = Non
         )
 
         # Salva la heatmap per l'agente corrente
-        save_path = os.path.join(save_dir, f"heatmap_{agent_name}.png")
+        save_path = os.path.join(save_dir, f"heatmap_{agent_name}_{map_size}_{seed}.png")
         plt.savefig(save_path)
         print(f"Heatmap salvata in: {save_path}")
 
