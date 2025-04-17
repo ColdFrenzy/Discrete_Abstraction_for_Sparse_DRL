@@ -24,7 +24,7 @@ SEED = 13
 
 class ContinuousUAV(Env):
     """
-    The UAVEnv environment is a simple gridworld MDP with a start state, a
+    The UAVEnv environment is a simple gridworld goal MDP with a start state, a
     goal state, and holes. For simplicity, the map is assumed to be a squared
     grid.
 
@@ -49,10 +49,31 @@ class ContinuousUAV(Env):
         OBST: bool = False,
         reward_type: RewardType = RewardType.dense,
         max_episode_steps: int = 100,
+        task: str = "encircle_target", # reach_target or encircle_target
+        desired_orientation: list[float, float] = [0.0, 0.0],
+        desired_distance: list[float, float] = [0.0, 0.0],
         is_slippery: bool = False,
         is_rendered: bool = False,
         is_display: bool = True,
     ):
+        """
+        Initialize the environment.
+        Args:
+            map_name (str): The name of the map.
+            agent_name (str): The name of the agent.
+            size (int): The size of the map.
+            agent_initial_pos (Tuple[float, float]): The initial position of the agent.
+            OBST (bool): Whether to use obstacles or not.
+            reward_type (RewardType): The type of reward to use.
+            max_episode_steps (int): The maximum number of steps per episode.
+            task (str): The task to perform. Can be "reach_target" or "encircle_target".
+            desired_orientation (float): The desired orientation for the encircle_target task.
+                The angle is computed with respect to the goal position. 0 is east and it increases counterclockwise.
+            desired_distance (float): The desired distance for the encircle_target task it's a crown around the target
+            is_slippery (bool): Whether the environment is slippery or not.
+            is_rendered (bool): Whether to render the environment or not. If is_display is False, the frame are returned but not displayed.
+            is_display (bool): Whether to display the environment or not.
+        """
         self.map_name = map_name
         self.OBST = OBST
         self.agent_name = agent_name
@@ -60,6 +81,10 @@ class ContinuousUAV(Env):
         self.is_slippery = is_slippery
         self.is_rendered = is_rendered
         self.transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
+        self.task = task
+        if self.task == "encircle_target":
+            self.desired_orientation = desired_orientation
+            self.desired_distance = desired_distance
 
         # Grid Topology
         self.holes, self.goals = parse_map_emoji(self.map_name)
@@ -121,12 +146,26 @@ class ContinuousUAV(Env):
             
 
         # Check for successful termination
-        desired_goal_cell = self.grid2frame(desired_goal)
-        if self.is_inside_cell(obs, desired_goal):
-            log = "GOAL REACHED"
-            if self.reward_type != RewardType.model:
-                reward += 10
-            terminated = True
+        if self.task == "reach_target":
+            desired_goal_cell = self.grid2frame(desired_goal)
+            if self.is_inside_cell(obs, desired_goal):
+                log = "GOAL REACHED"
+                if self.reward_type != RewardType.model:
+                    reward += 10
+                terminated = True
+        elif self.task == "encircle_target":
+            goal_pos = self.grid2frame(self.goal)
+            distance_from_goal = np.linalg.norm(obs - goal_pos)
+            angle_from_goal = np.arctan2(goal_pos[1] - obs[1], goal_pos[0] - obs[0])
+            angle_from_goal = (np.degrees(angle_from_goal) + 360) % 360  # Convert to degrees and normalize to [0, 360)
+            # we want the distance from the goal to be 
+            if self.desired_distance[0] < distance_from_goal < self.desired_distance[1]:
+                if self.desired_orientation[0] < angle_from_goal < self.desired_orientation[1]:
+                    reward += 10
+                    log = "GOAL REACHED"
+                    terminated = True
+                
+
 
 
         # Check for maximum steps termination
@@ -159,19 +198,31 @@ class ContinuousUAV(Env):
                 obs[i, 1] = np.clip(obs[i, 1], 0.05, self.size - 0.05)
                 step_reward = -1
             
-            # check for goal
-            desired_goal_cell = self.grid2frame(desired_goal[i])
-            if self.is_inside_cell(obs[i], desired_goal_cell):
-                log = "GOAL REACHED"
-                step_reward = 10
-            
             # Check for failure termination
             for hole in self.holes:
                 if self.is_inside_cell(obs[i], hole):
                     step_reward = -10
                     log = "HOLE"
                     break
-            reward.append(step_reward)
+
+            if self.task == "reach_target":
+                # check for goal
+                desired_goal_cell = self.grid2frame(desired_goal[i])
+                if self.is_inside_cell(obs[i], desired_goal_cell):
+                    log = "GOAL REACHED"
+                    step_reward = 10
+                reward.append(step_reward)
+            elif self.task == "encircle_target":
+                distance_from_goal = np.linalg.norm(obs[i] - desired_goal[i])/self.max_distance
+                angle_from_goal = np.arctan2(obs[i][1] - desired_goal[i][1], obs[i][0] - desired_goal[i][0])
+                # we want the distance from the goal to be 
+                if abs(distance_from_goal - self.desired_distance) < 0.05:
+                    step_reward += 1
+                    if angle_from_goal - self.desired_orientation < 0.05:
+                        step_reward += 1
+                        log = "CORRECT POSITION REACHED"
+                    reward.append(step_reward)
+                
         reward = torch.tensor(reward).unsqueeze(1)
 
         return reward

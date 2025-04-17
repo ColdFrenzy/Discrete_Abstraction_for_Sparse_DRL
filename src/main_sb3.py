@@ -19,6 +19,8 @@ def main(alg="SAC", map_size=5, seed=13):
     os.environ["IS_RENDER"] = "False"
     if alg == "SAC_HR":
         env_reward_type = RewardType.model
+    elif alg == "SACRELAX":
+        env_reward_type = RewardType.dense
     else:
         env_reward_type = RewardType.sparse # or model, or sparse
 
@@ -28,7 +30,7 @@ def main(alg="SAC", map_size=5, seed=13):
     map_size = map_size
     MAX_EPISODE_STEPS = 400
     NUM_EPISODES_DISCRETE = 50000 # 20000
-    OBST = True
+    OBST = False
     if OBST:
         map_name = MAPS_OBST[map_size]
     else:
@@ -41,6 +43,7 @@ def main(alg="SAC", map_size=5, seed=13):
     
         qtable = np.load(f"{QTABLE_DIR}/{transition_mode.name}/single_agent/qtable_{map_size}_obstacles_{OBST}.npz")
         generate_heatmaps_numbers(qtable)
+
     env = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = [0.5, map_size-0.5], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
     # Available strategies (cf paper): future, final, episode
 
@@ -85,7 +88,16 @@ def main(alg="SAC", map_size=5, seed=13):
             device=device,
             gamma=0.1,
         )
-
+    elif alg == "SACRELAX":
+        model = model_class(
+            "MultiInputPolicy",
+            env,
+            learning_starts=1e4,
+            tensorboard_log=f"./sac_dense_uav_tensorboard/{map_size}x{map_size}_{seed}",
+            verbose=2,
+            device=device,
+            gamma=0.1,
+        )
     # Train the model
     print("start learning")
     model.learn(100000, callback=custom_callback)
@@ -98,9 +110,9 @@ def main(alg="SAC", map_size=5, seed=13):
 
 
 if __name__ == "__main__":
-    algos = ["SAC", "SACHER"]
-    maps = [10]
-    seeds = [13, 42, 69]
+    algos = [ "SAC"] # "SAC", "SACHER", "SAC_HR"
+    maps = [3]
+    seeds = [13]
 
     for alg in algos:
         for map_size in maps:

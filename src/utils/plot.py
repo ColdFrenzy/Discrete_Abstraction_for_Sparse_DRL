@@ -84,8 +84,10 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
 
 
             # Extract step and reward values
-            steps = [event.step for event in event_acc.Scalars('rollout/ep_rew_mean')]
-            reward_values = [event.value for event in event_acc.Scalars('rollout/ep_rew_mean')]
+            # steps = [event.step for event in event_acc.Scalars('custom/win_rate')]
+            # reward_values = [event.value for event in event_acc.Scalars('custom/win_rate')]
+            steps = [event.step for event in event_acc.Scalars('rollout/ep_len_mean')]
+            reward_values = [event.value for event in event_acc.Scalars('rollout/ep_len_mean')]
 
             # Store rewards of each run
             all_steps.append(np.array(steps))
@@ -116,7 +118,7 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
         plt.fill_between(all_unique_steps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.2, )
     
     plt.xlabel('Steps')
-    plt.ylabel('Reward')
+    plt.ylabel('ep_len_mean')
     plt.legend()
     plt.show()
 
@@ -143,7 +145,8 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
 if __name__ == "__main__":
     name = "10x10"
     tb_paths = {"SAC": f"sac_uav_tensorboard/{name}",
-               "SAC_HER": f"her_sac_uav_tensorboard/{name}"}
-               #"SAC_HR": f"sac_hr_uav_tensorboard/{name}"}
+               "SAC_HER": f"her_sac_uav_tensorboard/{name}",
+               "SAC_HR": f"sac_hr_uav_tensorboard/{name}",
+               "SAC_RELAX": f"sac_dense_uav_tensorboard/{name}"}
     img_plot = ROOT_DIR / "plots" / f"{name}"
     tensordboard_plot(tensorboard_path=tb_paths, save_path=img_plot)

@@ -1,10 +1,9 @@
-from typing import Tuple
+from typing import List, Tuple
+from typing import Dict as DictType
 
-import os
-import cv2
-import imageio
 import numpy as np
 import pygame
+from src.environments.multi_agent.ma_cont_uav_env import MultiAgentContinuousUAV
 import torch
 import gymnasium as gym
 from gymnasium import error
@@ -26,9 +25,9 @@ from src.utils.paths import QTABLE_DIR
 
 
 
-class ContinuousUAVSb3HerWrapper(ContinuousUAV):
+class MultiAgentContinuousUAVSb3HerWrapper(MultiAgentContinuousUAV):
     """
-    The UAVEnv environment is a simple gridworld goal MDP with a start state, a
+    The UAVEnv environment is a simple gridworld MDP with a start state, a
     goal state, and holes. For simplicity, the map is assumed to be a squared
     grid.
 
@@ -37,32 +36,30 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
     """
     def __init__(
         self,
+        num_agents: int,
         map_name: str = "6x6",
-        agent_name: str = "a1",
-        size: int =  10,
-        agent_initial_pos: Tuple[float, float] = (2.5, 4.5),
+        agents_pos: list = [(0.5, 9.5), (0.5, 0.5)],
+        size: int = 10,
         OBST: bool = False,
         reward_type: RewardType = RewardType.dense,
-        max_episode_steps: int = 100,
         task: str = "encircle_target", # reach_target or encircle_target
-        desired_orientation: float = 0.0,
-        desired_distance: float = 0.0,
+        desired_orientations: list[list[float,float]] = None,
+        desired_distances: list[list[float,float]] = None,
         is_slippery: bool = False,
         is_rendered: bool = False,
         is_display: bool = True,
         seed: int = 13,
     ):
         super().__init__(
+            num_agents=num_agents,
             map_name=map_name,
-            agent_name=agent_name,
+            agents_pos=agents_pos,
             size=size,
-            agent_initial_pos=agent_initial_pos,
             OBST=OBST,
             reward_type=reward_type,
-            max_episode_steps=max_episode_steps,
-            task=task,
-            desired_orientation=desired_orientation,
-            desired_distance=desired_distance,
+            task = task,
+            desired_orientations=desired_orientations,
+            desired_distances=desired_distances,
             is_slippery=is_slippery,
             is_rendered=is_rendered,
             is_display=is_display,
@@ -95,52 +92,8 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
                 assert reward == env.compute_reward(ob['achieved_goal'], ob['desired_goal'], info)
         """
         
-        if len(achieved_goal.shape) == 2:
-            batch_size = len(achieved_goal)
-            batch_reward = []
-            for i in range(batch_size):
-                reward = 0
-                desired_goal_cell = self.frame2grid(desired_goal[i])
-                # Check for wall 
-                if achieved_goal[i][0] <= 0 or achieved_goal[i][0] >= self.size:
-                    reward = -1
-                elif achieved_goal[i][1] <= 0 or achieved_goal[i][1] >= self.size:
-                    reward = -1     
-
-                # Check for failure termination
-                elif self.holes is not None:
-                    for hole in self.holes:
-                        if self.is_inside_cell(achieved_goal[i], hole):
-                            reward = -10
-                            break
-                # Check for successful termination
-                elif self.is_inside_cell(achieved_goal[i], desired_goal_cell):
-                    reward = 10
-
-                
-                batch_reward.append(reward)
-            return np.array(batch_reward)
-                
-        else:
-            reward = 0
-            desired_goal_cell = self.frame2grid(desired_goal)
-            # Check for wall 
-            if achieved_goal[0] <= 0 or achieved_goal[0] >= self.size:
-                reward = -1
-            elif achieved_goal[1] <= 0 or achieved_goal[1] >= self.size:
-                reward = -1     
-
-            # Check for failure termination
-            if self.holes is not None:
-                for hole in self.holes:
-                    if self.is_inside_cell(achieved_goal, hole):
-                        reward = -10
-                        break
-            # Check for successful termination
-            elif self.is_inside_cell(achieved_goal, desired_goal_cell):
-                reward = 10
-
-            return reward
+        # TODO Implement the reward function
+        pass
 
 
 
@@ -148,17 +101,14 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
         """
         The agent takes a step in the environment.
         """
-        observation, reward, terminated, truncated, log = super().step(action)
-
-
-        obs_goal = {
-            'observation': observation.copy().astype(np.float32),
-            'achieved_goal': observation.copy().astype(np.float32),
-            'desired_goal': self.goal.copy().astype(np.float32),
-        }
+        observations, reward, terminated, truncated, log = super().step(action)
+        
+        for i, _ in enumerate(observations):
+            observations[i]["achieved_goal"] = observations[i]["observation"].detach().clone()
+            observations[i]["desired_goal"] = torch.tensor(self.goal.copy().astype(np.float32)).unsqueeze(0)
         # new_obs, rewards, dones, infos
         return (
-            obs_goal,
+            observations,
             reward,
             terminated,
             truncated,
@@ -170,7 +120,8 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
 
     def reset(self, seed=None) -> dict:
         seed = seed if seed is not None else self.seed
-        super().reset(seed=seed)
+        super().reset()
+        
         # Enforce that each GoalEnv uses a Goal-compatible observation space.
         if not isinstance(self.observation_space, gym.spaces.Dict):
             raise error.Error(
@@ -183,12 +134,16 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
                         key
                     )
                 )
-        observation = {
-            'observation': self.observation.copy().astype(np.float32),
-            'achieved_goal': self.observation.copy().astype(np.float32),
-            'desired_goal': self.goal.copy().astype(np.float32),
-        }
-    
+         
+        observation = []
+        
+        for i in range(self.num_agents):       
+            observation.append({
+                'observation': self.observations[i].copy().astype(np.float32),
+                'achieved_goal': self.observations[i].copy().astype(np.float32),
+                'desired_goal': self.goal.copy().astype(np.float32),
+            })
+        
         return observation, {}
 
 
@@ -214,7 +169,11 @@ class ContinuousUAVSb3HerWrapper(ContinuousUAV):
         """
         if self.num_steps >= self.max_episode_steps:
             return True
-
+        
+        # for hole in self.holes:
+        #     if self.is_inside_cell(achieved_goal, hole):
+        #         return True
+        
         return False
     
 
