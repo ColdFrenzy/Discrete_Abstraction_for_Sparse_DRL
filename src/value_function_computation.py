@@ -6,8 +6,8 @@ from src.algorithms.qlearning import QLearning
 from src.environments.state_encoder_uav import (
     StateEncoderUAV,
 )
-from src.environments.multi_agent.ma_uav import (
-    MultiAgentUAV,
+from src.environments.multi_agent.ma_disc_uav import (
+    DiscreteMultiAgentUAV,
 )
 
 from src.utils.evaluation_metrics import *
@@ -129,7 +129,7 @@ def compute_value_function(map_name, size, OBST, num_episodes = 10000, gamma: fl
     """
     # Env creation from map
     holes, goals = parse_map_emoji(map_name)
-    env = MultiAgentUAV(
+    env = DiscreteMultiAgentUAV(
         width=size,
         height=size,
         holes=holes,
@@ -319,7 +319,7 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
     
     # Env creation from map
     holes, goals = parse_map_emoji(map_name)
-    env = MultiAgentUAV(
+    env = DiscreteMultiAgentUAV(
         width=size,
         height=size,
         holes=holes,

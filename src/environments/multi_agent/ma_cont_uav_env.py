@@ -1,93 +1,165 @@
 import os
-from typing import Tuple
-
-import numpy as np
+import cv2
+import imageio
 import pygame
 import torch
+import numpy as np
 
-from src.definitions import RewardType
+from gymnasium.core import Env
+from typing import Tuple
+from copy import deepcopy
+from pygame.image import load
+from pygame.transform import scale
+from gymnasium.spaces import Box
+
+
+from src.utils.paths import IMAGE_DIR, EPISODES_DIR
+from src.definitions import RewardType, TransitionMode
 from src.environments.single_agent.cont_uav_env import ContinuousUAV
+from src.utils.utils import parse_map_emoji
+from src.utils.paths import QTABLE_DIR
 
 
-class MultiAgentContinuousUAV(ContinuousUAV):
+class MultiAgentContinuousUAV(Env):
     """
     Multi-agent version of the ContinuousUAV environment.
     """
-
     def __init__(
         self,
-        num_agents: int,
-        map_name: str = "6x6",
-        agents_pos: list = [(0.5, 9.5), (0.5, 0.5)],
-        size: int = 10,
+        map: str = "empty",
+        agents_pos: dict[str, list[float,float]] = {"a1": [2.5, 4.5]},
         OBST: bool = False,
         reward_type: RewardType = RewardType.dense,
+        max_episode_steps: int = 100,
         task: str = "encircle_target", # reach_target or encircle_target
-        desired_orientations: list[list[float,float]] = None,
-        desired_distances: list[list[float,float]] = None,
+        desired_orientations: dict[str, list[float,float]] = None,
+        desired_distances: dict[str, list[float,float]] = None,
         is_slippery: bool = False,
         is_rendered: bool = False,
         is_display: bool = True,
+        collision_radius: float = 0.5,
     ):
-        super().__init__(map_name=map_name, size=size, OBST=OBST, reward_type=reward_type, is_slippery=is_slippery, task = task, is_rendered=is_rendered, is_display=is_display)
-        self.num_agents = num_agents
-        self.agents_initial_pos = [agents_pos[i] for i in range(num_agents)]
-        self.start_observations = self.agents_initial_pos.copy()
-        self.rewards = [0.0 for _ in range(num_agents)]
-        self.prev_observations = self.agents_initial_pos.copy()
-        self.prev_actions = [np.zeros(2) for _ in range(num_agents)]
-        self.trajectories = [[] for _ in range(num_agents)]
+        """
+        Initialize the MultiAgentContinuousUAV environment.
+        Args:
+            map(str): emoji map string
+            agents_pos (dict): Initial positions of the agents. 
+            OBST (bool): Whether to include obstacles.
+            reward_type (RewardType): Type of reward.
+            max_episode_steps (int): Maximum number of steps in an episode.
+            task (str): Task type ("reach_target" or "encircle_target").
+            desired_orientations (dict): Desired orientations for encircle_target task.
+            desired_distances (dict): Desired distances for encircle_target task.
+            is_slippery (bool): Whether the environment is slippery.
+            is_rendered (bool): Whether to render the environment.
+            is_display (bool): Whether to display the environment.
+        The grid has the following coordinates:
+        (0,0)------------------(1,0)------------------(N,0)
+        |                                                  |
+        |                                                  |
+        (0,N)------------------(1,N)------------------(N,N)
+        """
+        # General env parameters
+        self.map = map
+        self.OBST = OBST
+        self.reward_type = reward_type
+        self.is_slippery = is_slippery
+        self.transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
         self.task = task
+        self.collision_radius = collision_radius
         if self.task == "encircle_target":
             self.desired_orientations = desired_orientations
             self.desired_distances = desired_distances
-        self.terminated = {i: False for i in range(num_agents)}
-        self.truncated = {i: False for i in range(num_agents)}
+        
+        # Grid Topology
+        self.holes, self.goals = parse_map_emoji(self.map)
+        self.size = self.map.count("\n") - 1 # for now we consider square maps
+        self.num_goals = len(self.goals)
+        self.grid_height = self.size
+        self.grid_width = self.size
+        self._cell_size = 100
 
-    def step(self, actions: list) -> Tuple[list, list, bool, dict]:
+        # Environment parameters
+        self.goal = np.array(list(self.goals.values())[0])
+        self.observation_space = Box(low=0, high=self.grid_width, shape=(2,))
+        self.action_space = Box(low=-0.4, high=0.4, shape=(2,))
+
+        # Reward related stuff
+        self._max_episode_steps = max_episode_steps
+
+        # agents related stuff
+        for agent in agents_pos:
+            if type(agents_pos[agent]) != np.array:
+                agents_pos[agent] = np.array(agents_pos[agent])
+        self.agents_initial_pos = deepcopy(agents_pos)  # useful for reset
+        assert len(self.agents_initial_pos) > 0, "At least one agent is required"
+        for agent, pos in self.agents_initial_pos.items():
+            assert len(pos) == 2, f"Agent {agent} position must be a list of two elements"
+            assert pos[0] >= 0 and pos[0] < self.grid_width, f"Agent {agent} x position out of bounds"
+            assert pos[1] >= 0 and pos[1] < self.grid_height, f"Agent {agent} y position out of bounds" 
+            for hole in self.holes:
+                assert not self.is_inside_cell(pos, hole), f"Agent {agent} position inside a hole"
+        self.agents = list(self.agents_initial_pos.keys())
+        self.num_agents = len(self.agents_initial_pos)
+        self.rewards = {agent: 0 for agent in self.agents}
+        self.trajectories = {agent: [] for agent in self.agents}
+        self.terminations = {agent: False for agent in self.agents}
+        self.truncations = {agent: False for agent in self.agents}
+        
+        # Rendering stuff
+        self.is_pygame_initialized = False
+        self.frames = []
+        self.is_rendered = is_rendered
+        self.is_display = is_display
+        if self.is_rendered:
+            self.init_render()
+        
+        # Load Q-table
+        if self.reward_type == RewardType.model:
+            self.values = self.load_values()
+
+    def step(self, actions: dict[str, list[float, float]]) -> Tuple[list, dict, dict, dict, dict]:
         """
         The agents take a step in the environment.
+        actions: dict[str, list[float, float]]: Actions for each agent.
+        actions are [dx, dy] where positive dx is right and positive dy is up.
         """
 
-        logs = []
-
-        for i, action in enumerate(actions):
-            if self.terminated[i] or self.truncated[i]:
+        new_pos = {agent: np.zeros((2,)) for agent in self.agents}
+        # iterate over the agents
+        for agent, action in actions.items():
+            if self.terminations[agent] or self.truncations[agent]:
                 continue
-            self.prev_observations[i] = self.observations[i]
             action = np.clip(action, self.action_space.low, self.action_space.high)
 
-            new_x = self.observations[i]["observation"][0,0] + action[0, 0]
-            new_y = self.observations[i]["observation"][0,1] + action[0, 1]
+            new_pos[agent][0] = self.observations[agent][0] + action[0]
+            new_pos[agent][1] = self.observations[agent][1] + action[1]
 
             if self.is_slippery:
-                new_x += np.random.normal(0, 0.01)
-                new_y += np.random.normal(0, 0.01)
-            if self.task == "encircle_target":
-                self.desired_distance = self.desired_distances[i]
-                self.desired_orientation = self.desired_orientations[i]
-            self.observations[i]["observation"], self.rewards[i], agent_terminated, agent_truncated, log = self.reward_function(
-                np.array([new_x, new_y])
-            )
+                new_pos[agent][0] += np.random.normal(0, 0.01)
+                new_pos[agent][1] += np.random.normal(0, 0.01)
 
-            self.trajectories[i].append(torch.tensor(self.observations[i]["observation"]))
-            self.observations[i]["observation"] = torch.tensor(self.observations[i]["observation"], dtype=torch.float32).unsqueeze(0)
-            self.num_steps += 1
+        self.rewards, logs = self.reward_function(
+            new_pos
+        )
+        
+        self.num_steps += 1
+        # Check for maximum steps termination
+        if self.num_steps >= self._max_episode_steps:
+            logs = "MAX STEPS REACHED"
 
-            if agent_terminated:
-                self.terminated[i] = True
-            if agent_truncated:
-                self.truncated[i] = True
-            logs.append(log)
 
-        return self.observations, self.rewards, self.terminated, self.truncated, {"logs": logs}
+        return self.observations, self.rewards, self.terminations, self.truncations, {"logs": logs}
 
-    def reset(self) -> Tuple[list, dict]:
-        super().reset()
+    def reset(self, seed=42) -> Tuple[list, dict]:
+        super().reset(seed=seed)
         self.num_steps = 0
-        self.observations = [np.array(initial_pos) for initial_pos in self.agents_initial_pos]
-        self.start_observations = self.observations.copy()
-        self.trajectories = [[] for _ in range(self.num_agents)]
+        self.terminations = {agent: False for agent in self.agents}
+        self.truncations = {agent: False for agent in self.agents}
+        self.rewards = {agent: 0 for agent in self.agents}
+        self.trajectories = {agent: [] for agent in self.agents}
+        self.observations = deepcopy(self.agents_initial_pos)
+        # Reset the agents' positions
         self.frames = []
         return self.observations, {}
     
@@ -99,7 +171,7 @@ class MultiAgentContinuousUAV(ContinuousUAV):
         if not self.is_pygame_initialized and self.is_rendered:
             self.init_render()
             self.is_pygame_initialized = True
-            self.trajectories = [[] for _ in range(self.num_agents)]
+            self.trajectories = {agent: [] for agent in self.agents}
             self.frames = []
 
         for x in range(0, self.screen_width, self._cell_size):
@@ -129,16 +201,28 @@ class MultiAgentContinuousUAV(ContinuousUAV):
             self.screen.blit(goal_text, text_rect)
 
         # Draw the agents
-        for i, observation in enumerate(self.observations):
-            x, y = self.frame2grid(observation["observation"][0])
+        for agent in self.observations:
+            x, y = self.observations[agent]
             agent_x = x * self._cell_size - self.agent_img.get_width() // 2
             agent_y = y * self._cell_size - self.agent_img.get_height() // 2
             self.screen.blit(self.agent_img, (agent_x, agent_y))
-
+            # Draw a circle around the agent to indicate its collision radius
+            surface = pygame.Surface((self._cell_size * 2, self._cell_size * 2), pygame.SRCALPHA)
+            pygame.draw.circle(
+                surface,
+                (255, 255, 0, 125),  # Yellow color with transparency
+                (self._cell_size, self._cell_size),
+                int(self.collision_radius * self._cell_size)
+            )
+            self.screen.blit(surface, (int(x * self._cell_size - self._cell_size), int(y * self._cell_size - self._cell_size)))
+            # Render the agent's ID on the screen
+            agent_text = self.font.render(agent, True, (0, 0, 0))  # Black color
+            text_rect = agent_text.get_rect(center=(int(x * self._cell_size), int(y * self._cell_size)))
+            self.screen.blit(agent_text, text_rect)
             # Draw the trajectory
-            if self.trajectories[i]:
-                for point in self.trajectories[i]:
-                    traj_x, traj_y = self.frame2grid(point)
+            if self.trajectories[agent]:
+                for point in self.trajectories[agent]:
+                    traj_x, traj_y = point
                     traj_x = traj_x * self._cell_size
                     traj_y = traj_y * self._cell_size
                     pygame.draw.circle(self.screen, (255, 0, 0), (traj_x, traj_y), 5)
@@ -155,7 +239,198 @@ class MultiAgentContinuousUAV(ContinuousUAV):
             pygame.display.update()
             self.clock.tick(60)
 
-    def render_episode(self, agents: list, max_steps: int = None):
+
+    def reward_function(self, new_pos: dict[str, list[float, float]]) -> Tuple[list, dict, dict, dict, dict]:
+        rewards = {agent: 0 for agent in self.agents}
+        log = {}
+        # don't update the agent positions if they collide 
+        update_agent = {agent: True for agent in self.agents}
+        for agent in new_pos:
+            # check for collisions with walls
+            if new_pos[agent][0] <= 0 or new_pos[agent][0] >= self.size:
+                update_agent[agent] = False
+                rewards[agent] = -1.
+                log[agent] = "WALL"
+            if new_pos[agent][1] <= 0 or new_pos[agent][1] >= self.size:
+                update_agent[agent] = False
+                rewards[agent] = -1.
+                log[agent] = "WALL"
+            # check for collisions with holes
+            for hole in self.holes:
+                if self.is_inside_cell(new_pos[agent], hole):
+                    update_agent[agent] = False
+                    rewards[agent] = -10.
+                    log[agent] = "HOLE"
+                    
+
+        # check for collisions with other agents
+        for i, agent1 in enumerate(new_pos):
+            for j, agent2 in enumerate(new_pos):
+                if i >= j:
+                    continue
+                else:
+                    if check_uav_collision(new_pos[agent1], new_pos[agent2], self.collision_radius):
+                        rewards[agent1] = -1.
+                        rewards[agent2] = -1.
+                        log[agent1] = "COLLISION"
+                        log[agent2] = "COLLISION"
+                        update_agent[agent1] = True
+                        update_agent[agent2] = True
+        
+        # for the remaining agents, check the reward
+        for agent in new_pos:
+            if update_agent[agent]:
+                continue
+            if self.reward_type == RewardType.dense:
+                goal_distance = np.linalg.norm(new_pos[agent] - self.goal)
+                rewards[agent] = -goal_distance
+            elif self.reward_type == RewardType.model:
+                i, j = self.frame2matrix(new_pos[agent])
+                rewards[agent] = self.values[agent][i, j] 
+            elif self.reward_type == RewardType.sparse:
+                # Check for successful termination
+                if self.task == "reach_target":
+                    if self.is_inside_cell(new_pos[agent], self.goal):
+                        log[agent] = "GOAL REACHED"
+                        rewards[agent] = 10.
+                        self.terminations[agent] = True
+                elif self.task == "encircle_target":
+                    goal_pos = self.goal
+                    distance_from_goal = np.linalg.norm(new_pos[agent] - goal_pos)
+                    angle_from_goal = np.arctan2(goal_pos[1] - new_pos[agent][1], goal_pos[0] - new_pos[agent][0])
+                    angle_from_goal = (np.degrees(angle_from_goal) + 360) % 360  # Convert to degrees and normalize to [0, 360)
+                    # we want the distance from the goal to be in a portion of crown around the goal
+                    if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
+                        if self.desired_orientation[agent][0] < angle_from_goal < self.desired_orientation[agent][1]:
+                            rewards[agent] = 10.
+                            log[agent] = "GOAL REACHED"
+                            self.terminations[agent] = True
+        # update agent positions 
+        for agent in new_pos.keys():
+            if update_agent[agent]:
+                self.observations[agent] = new_pos[agent]
+                self.trajectories[agent].append(self.observations[agent])
+
+        return rewards, log
+
+
+    def init_render(self):
+        """
+        Initialize the Pygame environment.
+        It loads the images and sets up the display.
+        """
+        pygame.init()
+        self.clock = pygame.time.Clock()
+        # Screen
+        self.screen_width = self.grid_width * self._cell_size
+        self.screen_height = self.grid_width * self._cell_size
+        if not self.is_display:
+            self.screen = pygame.Surface((self.screen_width, self.screen_height))
+        else:
+            self.screen = pygame.display.set_mode(
+                (int(self.screen_width), int(self.screen_height))
+            )
+
+        # Images
+        self.font = pygame.font.SysFont("Arial", 25)  # Crea un oggetto font
+
+        agent_img_path = IMAGE_DIR / "drone.png"
+        self.agent_img = scale(
+            load(agent_img_path), (self._cell_size, self._cell_size)
+        )
+        ice_img_path = IMAGE_DIR / "white.png"
+        self.ice_img = scale(
+            load(ice_img_path), (self._cell_size, self._cell_size)
+        )
+        hole_img_path = IMAGE_DIR / "red.png"
+        self.hole_img = scale(
+            load(hole_img_path), (self._cell_size, self._cell_size)
+        )
+        cracked_hole_img_path = IMAGE_DIR / "red.png"
+        self.cracked_hole_img = scale(
+            load(cracked_hole_img_path), (self._cell_size, self._cell_size)
+        )
+        goal_img_path = IMAGE_DIR / "yellow.png"
+        self.goal_img = scale(
+            load(goal_img_path), (self._cell_size // 3, self._cell_size // 3)
+        )
+
+    def quit_render(self):
+        """
+        Quit the Pygame environment.
+        """
+        pygame.quit()
+
+    def load_values(self) -> dict[np.ndarray]:
+        """
+        Load the Q-tables from the file system.
+        """
+        qtables = np.load(f"{QTABLE_DIR}/{self.transition_mode.name}/single_agent/qtable_{self.size}_obstacles_{self.OBST}.npz")
+        return qtables
+    
+    def is_inside_cell(self, pos: np.ndarray, cell: np.ndarray) -> bool:
+        """
+        Check if a position is inside a cell.
+        """
+        # cell_coord = self.grid2frame(cell)
+        cell_coord = cell
+        inside = True
+        if pos[0] < cell_coord[0] - 0.5:
+            inside = False  # left
+        if pos[0] > cell_coord[0] + 0.5:
+            inside = False  # right
+        if pos[1] < cell_coord[1] - 0.5:
+            inside = False  # bottom
+        if pos[1] > cell_coord[1] + 0.5:
+            inside = False  # top
+        return inside
+
+    def frame2matrix(self, frame_pos: np.ndarray) -> np.ndarray:
+        """
+        Convert a frame position to a matrix index.
+        """
+        x, y = self.frame2grid(frame_pos)
+
+        # Inverting the coordinates
+        # x actually represents the columns and y the rows
+        indices = np.floor(np.array([y, x])).astype(int)
+
+        return indices
+
+    def frame2grid(self, frame_pos: np.ndarray) -> np.ndarray:
+        """
+        Convert a frame (cartesian) position to a grid position.
+        The grid is defined as a matrix with the origin at the bottom left corner.
+        The frame is defined as a cartesian coordinate system with the origin at the top left corner.
+        """
+        assert len(frame_pos) == 2
+        x, y = frame_pos
+
+        # Flipping y axis
+        y = self.size - y
+
+        cell = np.array([x, y])
+
+        return cell
+
+    def grid2frame(self, grid_pos: np.ndarray) -> np.ndarray:
+        """
+        Convert a grid position to a frame position.
+        The grid is defined as a matrix with the origin at the bottom left corner.
+        The frame is defined as a cartesian coordinate system with the origin at the top left corner.
+        """
+        assert len(grid_pos) == 2
+        x, y = grid_pos
+        # Flipping y axis
+        y = self.size - y
+
+        # Centering the position
+        x += 0.5
+        y -= 0.5
+
+        return np.array([x, y])
+
+    def render_episode(self, agents: dict, max_steps: int = None):
         """
         Renders an episode with the given agents.
 
@@ -176,18 +451,121 @@ class MultiAgentContinuousUAV(ContinuousUAV):
                 for i, agent in enumerate(agents):
                     action, _ = agent.predict(self.observations[i], deterministic=True)
                     actions.append(action)
-            self.observations,  rewards,  terminated, truncated, _ = self.step(actions)
-
-
-                    # Debug prints
-            # print(f"Step: {step}")
-            # print(f"Actions: {actions}")
-            # print(f"Observations: {self.observations}")
-            # print(f"Rewards: {rewards}")
-            # print(f"Terminated: {terminated}")
-            # print(f"Truncated: {truncated}")
-            
+            self.observations,  rewards,  terminated, truncated, _ = self.step(actions)            
             
             self.render()
             if all(truncated.values()):
                 break
+    
+    def render_episode_goal_mdp(self, agents_model: dict, max_steps: int = None):
+        """
+        Renders an episode with the given agents.
+        Since it's a goal MDP, the observations will be dictionary including the following keys:
+        - observation: the current observation of the agent
+        - achieved_goal: the current achieved goal of the agent
+        - desired_goal: the current desired goal of the agent
+        Args:
+            agents (list): List of agent positions.
+            max_steps (int): Maximum number of steps in the episode.
+        """
+        observations,_ = self.reset()
+        if max_steps is None:
+            max_steps = self._max_episode_steps
+        for step in range(max_steps):
+            with torch.no_grad():
+                goal_mdp_observations = {agent: {} for agent in self.agents}
+                actions = {}
+                for agent in self.agents:
+                    goal_mdp_observations[agent]['observation'] = torch.tensor(observations[agent], dtype=torch.float32).unsqueeze(0)
+                    goal_mdp_observations[agent]['achieved_goal'] = torch.tensor(observations[agent], dtype=torch.float32).unsqueeze(0)
+                    goal_mdp_observations[agent]['desired_goal'] = torch.tensor(self.goal, dtype=torch.float32).unsqueeze(0)
+                    action, _ = agents_model[agent].predict(goal_mdp_observations[agent], deterministic=True)
+                    actions[agent] = action.squeeze(0)
+            observations,  rewards,  terminated, truncated, _ = self.step(actions)            
+            
+            self.render()
+            if all(truncated.values()) or all(terminated.values()):
+                break
+    
+    def save_episode(self, episode, name="uav_cont"):
+        """Save the episode in a directory."""
+
+        episodes_dir = EPISODES_DIR
+        if not os.path.exists(episodes_dir):
+            os.makedirs(episodes_dir, exist_ok=True)
+
+
+        if self.frames:
+            # Salva in formato AVI senza convertire i frames in BGR, poiché pygame li fornisce in RGB
+            video_path = f"{episodes_dir}/{name}_episode_{episode}.avi"
+            height, width, layers = self.frames[0].shape
+            video = cv2.VideoWriter(
+                video_path, cv2.VideoWriter_fourcc(*"DIVX"), 2, (width, height)
+            )
+
+            for frame in self.frames:
+                video.write(
+                    cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                )  # Usa i frames direttamente senza conversione
+
+            video.release()
+
+            # Salva in formato GIF
+            gif_path = f"{episodes_dir}/{name}_episode_{episode}.gif"
+            # I frames sono già in RGB, quindi li usiamo direttamente
+            imageio.mimsave(gif_path, self.frames, fps=10, loop=0)
+
+            self.frames = []  # Pulisci la lista dei frames
+
+
+
+def check_uav_collision(pos1: np.ndarray, pos2: np.ndarray, r: float) -> bool:
+    """
+    Check if two circles with centers pos1 and pos2 and radius r intersect.
+
+    Args:
+        pos1 (np.ndarray): Position of the first circle's center as a numpy array [x, y].
+        pos2 (np.ndarray): Position of the second circle's center as a numpy array [x, y].
+        r (float): Radius of both circles.
+
+    Returns:
+        bool: True if the circles intersect, False otherwise.
+    """
+    distance_squared = np.sum((pos2 - pos1) ** 2)
+    return distance_squared <= (2 * r) ** 2
+
+
+
+if __name__ == "__main__":
+    from src.environments.maps import MAPS_FREE
+    from src.environments.maps import MAPS_OBST
+    import time
+    map_size = 10
+    map = MAPS_OBST[map_size]
+    # Create the environment
+    env = MultiAgentContinuousUAV(
+        map=map,
+        agents_pos={"a1": [2.5, 8.5], "a2": [3.5, 5.5], 'a3': [1., 1.]},
+        OBST=True,
+        reward_type=RewardType.sparse,
+        max_episode_steps=50,
+        task="reach_target",
+        is_rendered=True,
+        is_display=True,
+    )
+
+    # Reset the environment
+    observations, _ = env.reset()
+
+    # Run the environment with random actions
+    for _ in range(env._max_episode_steps):
+        actions = {agent: env.action_space.sample() for agent in env.agents}
+        observations, rewards, terminations, truncations, info = env.step(actions)
+        env.render()
+        print(info)
+        time.sleep(0.1)
+        if all(terminations.values()) or all(truncations.values()):
+            break
+
+    # Quit rendering
+    env.quit_render()

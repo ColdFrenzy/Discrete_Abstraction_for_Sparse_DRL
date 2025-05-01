@@ -2,14 +2,12 @@ import os
 import numpy as np
 from src.environments.multi_agent.ma_cont_uav_env import MultiAgentContinuousUAV
 import torch
-from src.environments.multi_agent.ma_cont_uav_env_sb3 import MultiAgentContinuousUAVSb3HerWrapper
 from src.utils.paths import ROOT_DIR
 from src.definitions import RewardType, TransitionMode
 from src.environments.maps import MAPS_FREE
 from src.environments.maps import MAPS_OBST
 from stable_baselines3 import HerReplayBuffer, SAC
 from src.environments.single_agent.cont_uav_env_sb3 import ContinuousUAVSb3HerWrapper
-from src.utils.heatmap import generate_heatmaps_numbers
 import matplotlib.pyplot as plt
 from tensorboard.backend.event_processing import event_accumulator
 from scipy.interpolate import interp1d
@@ -78,7 +76,7 @@ def multi_tensordboard_plot(tensorboard_path: str, save_path: str):
     plt.legend()
     plt.show()
 
-def main(alg="SAC", map_size=3, seed=13):
+def main(alg="SAC", map_size=10, seed=13):
     model_class = SAC  # works also with SAC, DDPG and TD3
     os.environ["IS_RENDER"] = "True"
     if alg == "SAC_HR":
@@ -96,56 +94,35 @@ def main(alg="SAC", map_size=3, seed=13):
         map_name = MAPS_OBST[map_size]
     else:
         map_name = MAPS_FREE[map_size]
-       
-    tb_paths = {
-        "SAC_RH": f"tensorboards/multiagent_tensorboard/hr",
-        "SAC_HER": f"tensorboards/multiagent_tensorboard/her",
-        "SAC": f"tensorboards/multiagent_tensorboard/sac",
-        "SAC_RELAX": f"tensorboards/multiagent_tensorboard/dense",
-    }
     
-    num_agent = 3
-    tb_paths = {
-        "SAC_RH": f"tensorboards/agent_{num_agent}_tensorboard/hr",
-        "SAC_HER": f"tensorboards/agent_{num_agent}_tensorboard/her",
-        "SAC": f"tensorboards/agent_{num_agent}_tensorboard/sac",
-        "SAC_RELAX": f"tensorboards/agent_{num_agent}_tensorboard/dense",
-    }
-    
-    # tb_paths = {
-    #     "0.1": f"tensorboards/gammas_tensorboard/0.1",
-    #     "0.2": f"tensorboards/gammas_tensorboard/0.2",
-    #     "0.3": f"tensorboards/gammas_tensorboard/0.3",
-    #     "0.5": f"tensorboards/gammas_tensorboard/0.5",
-    #     "0.8": f"tensorboards/gammas_tensorboard/0.8",
-    #     "0.99": f"tensorboards/gammas_tensorboard/0.99",
-    # }
-    
-    # multi_tensordboard_plot(tensorboard_path=tb_paths, save_path = ROOT_DIR / "plots")
-    num_agents = 3
     DESIRED_ORIENTATIONS = [[44.,46.], [134.,136.], [269., 271.]]
     DESIRED_DISTANCES = [[0.9, 1.1],[0.9, 1.1],[0.9, 1.1]] # circular crown around the target
-    task = "encircle_target"
-    a1_initial_pos = [0.5, 0.5]
-    # env1 = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = a1_initial_pos, task="encircle_target", desired_orientation= None, desired_distance = None, reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
+    task = "reach_target"
+
+    agents_pos = {"a1":  [0.5, 0.5],
+                   "a2":  [0.5, 0.5],
+                   "a3":  [0.5, 0.5]}
     
-    a2_initial_pos = [0.5, 0.5]
-    # env2 = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a2", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = a2_initial_pos, task="encircle_target", desired_orientation= None, desired_distance = None, reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
+    agents_model = {}
+    for agent in agents_pos:
+        save_path = f"./models/{agent}/{alg}/{map_size}x{map_size}_{seed}_0.99"
+        agents_model[agent] = model_class.load(save_path) #, env=env1)
 
-    a3_initial_pos = [0.5, 0.5]
-    # env3 = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a3", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = a3_initial_pos, task="encircle_target", desired_orientation= None, desired_distance = None, reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
- 
-    save_path1 = f"./models/a1/{alg}/{map_size}x{map_size}_{seed}_0.9"
-    agent1 = model_class.load(save_path1) #, env=env1)
-
-    save_path2 = f"./models/a2/{alg}/{map_size}x{map_size}_{seed}_0.9"
-    agent2 = model_class.load(save_path2) # , env=env2)
-
-    save_path3 = f"./models/a3/{alg}/{map_size}x{map_size}_{seed}_0.9"
-    agent3 = model_class.load(save_path3) #, env=env3)
     
-    multiagent_env = MultiAgentContinuousUAVSb3HerWrapper(map_name =  map_name, num_agents = 3, agents_pos= [a1_initial_pos,a2_initial_pos, a3_initial_pos], size = map_size, OBST=OBST, reward_type = env_reward_type,task = task,desired_orientations=DESIRED_ORIENTATIONS, desired_distances=DESIRED_DISTANCES, is_rendered = True, is_slippery = is_slippery, is_display=False)
-    multiagent_env.render_episode(agents=[agent1, agent2, agent3], max_steps=100)
+    multiagent_env = MultiAgentContinuousUAV(
+        map =  map_name,
+        agents_pos= agents_pos,
+        OBST=OBST,
+        reward_type = env_reward_type,
+        max_episode_steps=MAX_EPISODE_STEPS,
+        task = task,
+        desired_orientations=DESIRED_ORIENTATIONS,
+        desired_distances=DESIRED_DISTANCES,
+        is_rendered = True,
+        is_slippery = is_slippery,
+        is_display=False
+        )
+    multiagent_env.render_episode_goal_mdp(agents_model=agents_model, max_steps=100)
     multiagent_env.save_episode(1, name="multi_uav_cont")
 
 if __name__ == "__main__":

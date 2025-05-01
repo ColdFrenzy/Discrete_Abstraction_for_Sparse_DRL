@@ -477,7 +477,7 @@ class ContinuousUAV(Env):
         self.clock = pygame.time.Clock()
         # Screen
         self.screen_width = self.grid_width * self._cell_size
-        self.screen_height = self.grid_width * self._cell_size
+        self.screen_height = self.grid_height * self._cell_size
         if not self.is_display:
             self.screen = pygame.Surface((self.screen_width, self.screen_height))
         else:

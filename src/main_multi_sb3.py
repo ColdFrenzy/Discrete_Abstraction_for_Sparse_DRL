@@ -17,13 +17,6 @@ from src.utils.evaluation_metrics import WinRateCallback
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.base_class import BaseAlgorithm
 
-def get_agent_pos(idx: int, map_size: int) -> float:
-    """
-    idx goes from 0 to map_size (exclusive)
-    """
-    if idx >= map_size:
-        raise ValueError(f"idx must be less than {map_size}")
-    return (2*idx + 1) * 0.5
 
 def main(alg="SAC", map_size=5, gamma = 0.1, seed=42):
     model_class = SAC  # works also with SAC, DDPG and TD3
@@ -56,15 +49,15 @@ def main(alg="SAC", map_size=5, gamma = 0.1, seed=42):
     DESIRED_ORIENTATIONS = {"a1": [44.,46.], "a2": [134.,136.], "a3": [269., 271.]} 
     DESIRED_DISTANCES = {"a1": [0.9, 1.1], "a2": [0.9, 1.1], "a3": [0.9, 1.1]} # circular crown around the target
     custom_callback_1 = WinRateCallback() 
-    a1_initial_pos = [get_agent_pos(0, map_size), get_agent_pos(0, map_size)]
+    a1_initial_pos = [2.5, 8.5]
     env1 = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = a1_initial_pos, task="encircle_target", desired_orientation= DESIRED_ORIENTATIONS["a1"], desired_distance = DESIRED_DISTANCES["a1"], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=True, seed=seed)
     
     custom_callback_2 = WinRateCallback()
-    a2_initial_pos = [get_agent_pos(0, map_size), get_agent_pos(0, map_size)]
+    a2_initial_pos = [3.5, 5.5] 
     env2 = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a2", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = a2_initial_pos, task="encircle_target", desired_orientation= DESIRED_ORIENTATIONS["a2"], desired_distance = DESIRED_DISTANCES["a2"], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
 
     custom_callback_3 = WinRateCallback() 
-    a3_initial_pos = [get_agent_pos(0, map_size), get_agent_pos(0, map_size)]
+    a3_initial_pos = [1., 1.]
     env3 = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a3", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = a3_initial_pos, task="encircle_target", desired_orientation= DESIRED_ORIENTATIONS["a3"], desired_distance = DESIRED_DISTANCES["a3"], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
     # Available strategies (cf paper): future, final, episode
     

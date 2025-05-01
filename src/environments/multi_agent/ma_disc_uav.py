@@ -11,7 +11,7 @@ random.seed(a=123)
 np.random.seed(123)
 
 
-class MultiAgentUAV(BaseEnvironment):
+class DiscreteMultiAgentUAV(BaseEnvironment):
     metadata = {"name": "multi_agent_uav"}
 
     def __init__(self, width, height, holes):
