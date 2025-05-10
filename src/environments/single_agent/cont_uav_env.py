@@ -72,7 +72,7 @@ class ContinuousUAV(Env):
             desired_distance (float): The desired distance for the encircle_target task it's a crown around the target
             is_slippery (bool): Whether the environment is slippery or not.
             is_rendered (bool): Whether to render the environment or not. If is_display is False, the frame are returned but not displayed.
-            is_display (bool): Whether to display the environment or not.
+            is_display (bool): Whether to display the environment or not. Set it to false on headless machines.
         """
         self.map_name = map_name
         self.OBST = OBST
@@ -416,7 +416,7 @@ class ContinuousUAV(Env):
             pygame.display.update()
             self.clock.tick(60)
         
-    def render_episode(self, agent: "RLAgent", max_steps: int = None):
+    def render_episode(self, agent, max_steps: int = None):
         """
         Renders an episode with the given agents.
         """
