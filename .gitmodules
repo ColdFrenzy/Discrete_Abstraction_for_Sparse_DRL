@@ -1,0 +1,4 @@
+[submodule "BenchMARL"]
+	path = BenchMARL
+	url = https://github.com/ColdFrenzy/BenchMARL.git
+	branch = uav_encirclement

@@ -100,7 +100,6 @@ class MultiAgentContinuousUAV(Env):
             for hole in self.holes:
                 assert not self.is_inside_cell(pos, hole), f"Agent {agent} position inside a hole"
         self.agents = list(self.agents_initial_pos.keys())
-        self.num_agents = len(self.agents_initial_pos)
         self.rewards = {agent: 0 for agent in self.agents}
         self.trajectories = {agent: [] for agent in self.agents}
         self.terminations = {agent: False for agent in self.agents}
@@ -146,7 +145,9 @@ class MultiAgentContinuousUAV(Env):
         self.num_steps += 1
         # Check for maximum steps termination
         if self.num_steps >= self._max_episode_steps:
-            logs = "MAX STEPS REACHED"
+            for agent in logs:
+                logs[agent] = "MAX STEPS"
+                self.truncations[agent] = True
 
 
         return self.observations, self.rewards, self.terminations, self.truncations, {"logs": logs}
@@ -164,7 +165,7 @@ class MultiAgentContinuousUAV(Env):
         return self.observations, {}
     
     
-    def render(self):
+    def render(self, mode="human"):
         """
         Renders the environment with the given observations.
         """
@@ -233,16 +234,20 @@ class MultiAgentContinuousUAV(Env):
             image_data = pygame.surfarray.array3d(pygame.display.get_surface())
         image_data = image_data.transpose([1, 0, 2])
         self.frames.append(image_data)
-
-        if self.is_display:
+        
+        if self.is_display and mode == "human":
             pygame.event.pump()
             pygame.display.update()
             self.clock.tick(60)
+        
+        if mode == "rgb_array":
+            return image_data
+            
 
 
     def reward_function(self, new_pos: dict[str, list[float, float]]) -> Tuple[list, dict, dict, dict, dict]:
         rewards = {agent: 0 for agent in self.agents}
-        log = {}
+        log = {agent: "" for agent in self.agents}
         # don't update the agent positions if they collide 
         update_agent = {agent: True for agent in self.agents}
         for agent in new_pos:

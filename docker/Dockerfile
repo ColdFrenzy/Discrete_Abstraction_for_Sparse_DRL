@@ -25,7 +25,7 @@ RUN chown -R robot:robot /opt
 USER robot
 
 
-ADD requirements.txt /opt/requirements.txt
+ADD ../requirements.txt /opt/requirements.txt
 
 ENV PATH=$PATH:/home/robot/.local/bin
 
