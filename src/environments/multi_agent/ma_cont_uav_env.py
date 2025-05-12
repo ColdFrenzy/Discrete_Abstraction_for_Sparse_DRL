@@ -27,6 +27,7 @@ class MultiAgentContinuousUAV(Env):
     def __init__(
         self,
         map: str = "empty",
+        size: int = 10,
         agents_pos: dict[str, list[float,float]] = {"a1": [2.5, 4.5]},
         OBST: bool = False,
         reward_type: RewardType = RewardType.dense,
@@ -70,10 +71,11 @@ class MultiAgentContinuousUAV(Env):
         if self.task == "encircle_target":
             self.desired_orientations = desired_orientations
             self.desired_distances = desired_distances
+        self.rng = None
         
         # Grid Topology
         self.holes, self.goals = parse_map_emoji(self.map)
-        self.size = self.map.count("\n") - 1 # for now we consider square maps
+        self.size = size # for now we consider square maps
         self.num_goals = len(self.goals)
         self.grid_height = self.size
         self.grid_width = self.size
@@ -81,7 +83,7 @@ class MultiAgentContinuousUAV(Env):
 
         # Environment parameters
         self.goal = np.array(list(self.goals.values())[0])
-        self.observation_space = Box(low=0, high=self.grid_width, shape=(2,))
+        self.observation_space = Box(low=-1, high=self.grid_width, shape=(2 + len(agents_pos),))
         self.action_space = Box(low=-0.4, high=0.4, shape=(2,))
 
         # Reward related stuff
@@ -123,11 +125,13 @@ class MultiAgentContinuousUAV(Env):
         actions: dict[str, list[float, float]]: Actions for each agent.
         actions are [dx, dy] where positive dx is right and positive dy is up.
         """
-
         new_pos = {agent: np.zeros((2,)) for agent in self.agents}
         # iterate over the agents
         for agent, action in actions.items():
-            if self.terminations[agent] or self.truncations[agent]:
+            if self.terminations[agent]:
+                # absorbing state for terminated agents
+                self.observations[agent] = np.array([-1.0, -1.0])
+                self.rewards[agent] = 0.0
                 continue
             action = np.clip(action, self.action_space.low, self.action_space.high)
 
@@ -146,25 +150,51 @@ class MultiAgentContinuousUAV(Env):
         # Check for maximum steps termination
         if self.num_steps >= self._max_episode_steps:
             for agent in logs:
-                logs[agent] = "MAX STEPS"
+                logs[agent]["MAX STEPS"] = True
                 self.truncations[agent] = True
 
 
-        return self.observations, self.rewards, self.terminations, self.truncations, {"logs": logs}
+        return self.observations, self.rewards, self.terminations, self.truncations, logs
 
     def reset(self, seed=42) -> Tuple[list, dict]:
-        super().reset(seed=seed)
+        # super().reset(seed=seed)
+        if self.rng is None:
+            self.rng = np.random.default_rng(seed)
         self.num_steps = 0
         self.terminations = {agent: False for agent in self.agents}
         self.truncations = {agent: False for agent in self.agents}
         self.rewards = {agent: 0 for agent in self.agents}
         self.trajectories = {agent: [] for agent in self.agents}
         self.observations = deepcopy(self.agents_initial_pos)
-        # Reset the agents' positions
+        # Reset the agents' positions. Uncomment the following for random positions
+        # agents_position = []
+        # self.observations = {}
+        # for agent in self.agents:
+        #     valid_position = False
+        #     while not valid_position:
+        #         x = self.rng.integers(0, self.grid_width)
+        #         y = self.rng.integers(0, self.grid_height)
+        #         # Check if the position is valid (not on a wall)
+        #         valid_position = self.check_initial_position(x, y, agents_position)
+
+        #     self.observations[agent] = np.array([x, y])
+        #     agents_position.append((x, y))
         self.frames = []
         return self.observations, {}
     
-    
+    def check_initial_position(self, x: int, y: int, agents_position: list[tuple[int, int]]) -> bool:
+        """
+        Check if the initial position is valid (not on a wall and not occupied by another agent).
+        """
+        for hole in self.holes:
+            if self.is_inside_cell([x, y], hole):
+                return False
+        if self.is_inside_cell([x, y], self.goal):
+            return False
+        if (x,y) in agents_position:
+            return False
+        return True
+
     def render(self, mode="human"):
         """
         Renders the environment with the given observations.
@@ -247,7 +277,7 @@ class MultiAgentContinuousUAV(Env):
 
     def reward_function(self, new_pos: dict[str, list[float, float]]) -> Tuple[list, dict, dict, dict, dict]:
         rewards = {agent: 0 for agent in self.agents}
-        log = {agent: "" for agent in self.agents}
+        log = {agent: {} for agent in self.agents}
         # don't update the agent positions if they collide 
         update_agent = {agent: True for agent in self.agents}
         for agent in new_pos:
@@ -255,18 +285,17 @@ class MultiAgentContinuousUAV(Env):
             if new_pos[agent][0] <= 0 or new_pos[agent][0] >= self.size:
                 update_agent[agent] = False
                 rewards[agent] = -1.
-                log[agent] = "WALL"
+                log[agent]["WALL"] = True
             if new_pos[agent][1] <= 0 or new_pos[agent][1] >= self.size:
                 update_agent[agent] = False
                 rewards[agent] = -1.
-                log[agent] = "WALL"
+                log[agent]["WALL"] = True
             # check for collisions with holes
             for hole in self.holes:
                 if self.is_inside_cell(new_pos[agent], hole):
                     update_agent[agent] = False
                     rewards[agent] = -10.
-                    log[agent] = "HOLE"
-                    
+                    log[agent]["HOLE"] = True                   
 
         # check for collisions with other agents
         for i, agent1 in enumerate(new_pos):
@@ -277,10 +306,10 @@ class MultiAgentContinuousUAV(Env):
                     if check_uav_collision(new_pos[agent1], new_pos[agent2], self.collision_radius):
                         rewards[agent1] = -1.
                         rewards[agent2] = -1.
-                        log[agent1] = "COLLISION"
-                        log[agent2] = "COLLISION"
-                        update_agent[agent1] = True
-                        update_agent[agent2] = True
+                        log[agent1]["COLLISION"] = True
+                        log[agent2]["COLLISION"] = True
+                        update_agent[agent1] = False
+                        update_agent[agent2] = False
         
         # for the remaining agents, check the reward
         for agent in new_pos:
@@ -296,8 +325,8 @@ class MultiAgentContinuousUAV(Env):
                 # Check for successful termination
                 if self.task == "reach_target":
                     if self.is_inside_cell(new_pos[agent], self.goal):
-                        log[agent] = "GOAL REACHED"
-                        rewards[agent] = 10.
+                        log[agent]["GOAL REACHED"] = True
+                        rewards[agent] = 30.
                         self.terminations[agent] = True
                 elif self.task == "encircle_target":
                     goal_pos = self.goal
@@ -308,7 +337,7 @@ class MultiAgentContinuousUAV(Env):
                     if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
                         if self.desired_orientation[agent][0] < angle_from_goal < self.desired_orientation[agent][1]:
                             rewards[agent] = 10.
-                            log[agent] = "GOAL REACHED"
+                            log[agent]["GOAL REACHED"] = True
                             self.terminations[agent] = True
         # update agent positions 
         for agent in new_pos.keys():

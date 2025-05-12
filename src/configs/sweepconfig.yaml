@@ -1,0 +1,96 @@
+program: "benchmarl/run.py"
+project: "multi_uav"
+entity: "francesco_diag"
+
+method: bayes 
+
+metric:
+  name: eval/win_rate
+  goal: maximize
+
+parameters:
+  ##############################
+  # experiment hyperparameters #
+  ##############################
+  experiment.sampling_device:
+    value: "cuda"
+  experiment.train_device: 
+    value: "cuda"
+  experiment.buffer_device: 
+    value: "cuda"
+  experiment.gamma:
+    values: [0.99, 0.95, 0.9]
+  experiment.lr:
+    values: [0.0001, 0.00001]
+  experiment.adam_eps:
+    values: [0.00001, 0.000001]
+  experiment.hard_target_update_frequency:
+    values: [50, 100]
+  experiment.max_n_frames:
+    value: 1_000_000
+  experiment.on_policy_collected_frames_per_batch: 
+    value: 2000
+  experiment.on_policy_n_minibatch_iters:
+    values: [10, 20, 40]
+  experiment.on_policy_minibatch_size:
+    values: [128, 256, 400]
+  experiment.evaluation:
+    value: True
+  experiment.evaluation_interval:
+    value: 20_000
+  experiment.checkpoint_interval:
+    value: 20_000
+  experiment.keep_checkpoints_num:
+    value: 3
+  experiment.evaluation_deterministic_actions:
+    value: False
+  experiment.evaluation_episodes:
+    value: 20
+  experiment.render:
+    value: True
+
+
+  #############################
+  # algorithm hyperparameters #
+  #############################
+  algorithm.entropy_coef:
+      values: [0.05, 0.01, 0.001]
+  algorithm.critic_coef:
+      value: 1.0
+  algorithm.lmbda:
+      values: [0.92, 0.9]
+
+  # # task hyperparameters
+  # task.goal_type:
+  #   value: "corr"
+  #   # distribution: categorical
+  ###########################
+  # network hyperparameters #
+  ###########################
+  model.num_cells:
+    values: 
+      - [64, 64]
+      - [128 ,64]
+  model.activation_class:
+    value: torch.nn.ReLU
+
+early_terminate:
+  type: hyperband # run multiple configurations in parallel
+  # max_iter: 27  # [max_iter/eta, max_iter/eta^2] if s = 2 is the min number of iterations to do before stopping runs
+  min_iter: 4     # min_iter*eta, min_iter*eta^2, ... is the max number of iterations to do before stopping runs
+  eta: 3          # 1-(1/eta) in our case 2/3 of runs will be stopped
+  # s: 2          # number of elem when max_iter is defined if s=3 we have [max_iter/eta, max_iter/eta^2, max_iter/eta^3] 
+  # with min_iter=4 and eta=3 runs are evaluated every 80k, 160k and 720k frames
+  # with min_iter=5 and eta=3 runs are evaluated every 100k, 200k and 900k frames
+  strict: True    #strictly terminate runs
+  # seed:
+  #   max: 84
+  #   min: 0
+  #   distribution: int_uniform
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args_no_hyphens}
+  

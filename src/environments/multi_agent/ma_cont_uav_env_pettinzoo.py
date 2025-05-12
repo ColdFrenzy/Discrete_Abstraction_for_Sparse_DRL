@@ -1,9 +1,11 @@
 """This file contains a Pettingzoo wrapper for the Multi-Agent Continuous UAV Environment
 """
 import functools
+import numpy as np
 from pettingzoo import ParallelEnv
 from src.environments.maps import MAPS_FREE
 from src.environments.maps import MAPS_OBST
+from src.definitions import RewardType, TransitionMode
 
 class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
     metadata = {"render_modes": ["human", "rgb_array"], "name": "multiagent_cont_uav_v0"}
@@ -11,12 +13,11 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
     def __init__(self,
         env,
         map: str = 10,
-        agents_pos: dict[str, list[float,float]] = {"a1":  [0.5, 0.5],
+        agents_pos: dict[str, list[float,float]] = {"a1":  [5.5, 4.5],
                    "a2":  [0.5, 0.5],
-                   "a3":  [0.5, 0.5]
                    },
-        OBST: bool = False,
-        reward_type = 1,
+        OBST: bool = True,
+        reward_type = RewardType.sparse,
         max_episode_steps: int = 200,
         task: str = "reach_target", # reach_target or encircle_target
         desired_orientations: dict[str, list[float,float]] = None,
@@ -35,6 +36,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
 
         self.env = env(
             map=map_name, 
+            size=map,
             agents_pos=agents_pos,
             OBST=OBST, 
             reward_type=reward_type,
@@ -58,6 +60,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
         }
         self.render_mode = render_mode
         self._max_episode_steps = self.env._max_episode_steps
+        # counter for the terminated steps of each agent (give reward only when agent is terminated for the first time)
 
     def observation_space(self, agent):
         return self.env.observation_space
@@ -67,16 +70,42 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
     def reset(self, seed=None, options=None):
         # reset the environment
         self.agents = self.possible_agents[:]
+        # counter for the terminated steps of each agent (give reward only when agent is terminated for the first time)
         observations, infos = self.env.reset(seed=seed)
         for agent in self.possible_agents:
-            infos[agent] = {}
-        return observations, infos
+            infos[agent] = {"GOAL REACHED": False}
+        new_observations = {}
+        for agent in self.possible_agents:
+            one_hot_encoding = [0 for _ in range(len(self.possible_agents))]
+            one_hot_encoding[self.agent_name_mapping[agent]] = 1.
+            one_hot_encoding = np.array(one_hot_encoding)
+            new_observations[agent] = np.concat((one_hot_encoding, (observations[agent] / self.env.size)))
+        return new_observations, infos
 
     def step(self, actions):
         # step the environment
         observations, rewards, env_terminations, env_truncations, infos = self.env.step(actions)
+        new_observations = {}
+        new_infos = {agent: {} for agent in self.possible_agents}
+        for agent in self.possible_agents:
+            # don't update the observation if 
+            one_hot_encoding = [0 for _ in range(len(self.possible_agents))]
+            one_hot_encoding[self.agent_name_mapping[agent]] = 1.
+            one_hot_encoding = np.array(one_hot_encoding)
+            new_observations[agent] = np.concat((one_hot_encoding, (observations[agent] / self.env.size))) if observations[agent][0] >= 0 else np.concat((one_hot_encoding, observations[agent]))
 
-        return observations, rewards, env_terminations, env_truncations, infos
+            if "GOAL REACHED" in infos[agent]:
+                new_infos[agent]["GOAL REACHED"] = infos[agent]["GOAL REACHED"]
+            else:
+                new_infos[agent] = {"GOAL REACHED":  False}
+
+        # terminate the environment only if all agents are terminated
+        if all(env_terminations.values()):
+            env_terminations = {agent: True for agent in self.possible_agents}
+        else:
+            env_terminations = {agent: False for agent in self.possible_agents}
+
+        return new_observations, rewards, env_terminations, env_truncations, new_infos
 
     def render(self, mode="rgb_array"):
         # render the environment
