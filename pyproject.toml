@@ -15,7 +15,7 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [tool.pixi.tasks]
-board-multi = "tensorboard --logdir_spec=./multiagent_tensorboard"
+board-multi = "tensorboard --logdir_spec=./tensorboards/multiagent_tensorboardc"
 board-rh = "tensorboard --logdir_spec=./sac_hr_uav_tensorboard"
 board-sac = "tensorboard --logdir_spec=./sac_uav_tensorboard"
 board-her = "tensorboard --logdir_spec=./her_uav_tensorboard"

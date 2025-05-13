@@ -71,10 +71,12 @@ def multi_tensordboard_plot(tensorboard_path: str, save_path: str):
         plt.plot(all_unique_steps, mean_rewards, label=f"{algorithm_name}", lw=2)
         plt.fill_between(all_unique_steps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.2, )
     
-    plt.xlabel('Steps')
-    plt.ylabel('Win Rate')
-    plt.legend()
-    plt.show()
+    plt.xlabel('Steps', fontdict={'size': 23})
+    plt.ylabel('Win Rate', fontdict={'size': 23})
+    plt.xticks(fontsize=15)
+    plt.yticks(fontsize=15)
+    plt.legend(fontsize=13, loc='upper left')
+    plt.savefig("10x10_win_rate_plot.png", dpi=600)
 
 def main(alg="SAC_HR", map_size=10, seed=13):
     model_class = SAC  # works also with SAC, DDPG and TD3
@@ -95,14 +97,14 @@ def main(alg="SAC_HR", map_size=10, seed=13):
     else:
         map_name = MAPS_FREE[map_size]
        
-    tb_paths = {
-        "SAC_RH": f"tensorboards/multiagent_tensorboard/hr",
-        "SAC_HER": f"tensorboards/multiagent_tensorboard/her",
-        "SAC": f"tensorboards/multiagent_tensorboard/sac",
-        "SAC_RELAX": f"tensorboards/multiagent_tensorboard/dense",
-    }
+    # tb_paths = {
+    #     "SAC_RH": f"tensorboards/multiagent_tensorboard/hr",
+    #     "SAC_HER": f"tensorboards/multiagent_tensorboard/her",
+    #     "SAC": f"tensorboards/multiagent_tensorboard/sac",
+    #     "SAC_RELAX": f"tensorboards/multiagent_tensorboard/dense",
+    # }
     
-    num_agent = 1
+    num_agent = 2
     tb_paths = {
         "SAC_RH": f"tensorboards/agent_{num_agent}_tensorboard/hr",
         "SAC_HER": f"tensorboards/agent_{num_agent}_tensorboard/her",
