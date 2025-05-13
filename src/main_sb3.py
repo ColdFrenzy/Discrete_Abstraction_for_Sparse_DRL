@@ -62,7 +62,7 @@ def main(alg="SAC", map_size=5, seed=13):
                 n_sampled_goal=4,
                 goal_selection_strategy=goal_selection_strategy,
             ),
-            tensorboard_log=f"./her_sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
+            tensorboard_log=f"./sa_her_sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
         )
@@ -71,7 +71,7 @@ def main(alg="SAC", map_size=5, seed=13):
             "MultiInputPolicy",
             env,
             learning_starts=1e4,
-            tensorboard_log=f"./sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
+            tensorboard_log=f"./sa_sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
         )
@@ -80,7 +80,7 @@ def main(alg="SAC", map_size=5, seed=13):
             "MultiInputPolicy",
             env,
             learning_starts=1e4,
-            tensorboard_log=f"./sac_hr_uav_tensorboard/{map_size}x{map_size}_{seed}",
+            tensorboard_log=f"./sa_sac_hr_uav_tensorboard/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
             gamma=0.1,

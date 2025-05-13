@@ -38,7 +38,7 @@ def main(alg="SAC_HR", map_size=3, seed=42):
             "MultiInputPolicy",
             env,
             learning_starts=1e4,
-            tensorboard_log=f"./sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
+            tensorboard_log=f"./sa_sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
         )

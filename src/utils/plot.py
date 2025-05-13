@@ -143,9 +143,9 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
 
 if __name__ == "__main__":
     name = "10x10"
-    tb_paths = {"SAC": f"sac_uav_tensorboard/{name}",
-               "SAC_HER": f"her_sac_uav_tensorboard/{name}",
-               "SAC_HR": f"sac_hr_uav_tensorboard/{name}",
-               "SAC_RELAX": f"sac_dense_uav_tensorboard/{name}"}
+    tb_paths = {"SAC": f"sa_sac_uav_tensorboard/{name}",
+               "SAC_HER": f"sa_her_sac_uav_tensorboard/{name}",
+               "SAC_HR": f"sa_sac_hr_uav_tensorboard/{name}",
+               "SAC_RELAX": f"sa_sac_dense_uav_tensorboard/{name}"}
     img_plot = ROOT_DIR / "plots" / f"{name}_single_ep_len_mean_plot.png"
     tensordboard_plot(tensorboard_path=tb_paths, save_path=img_plot)
