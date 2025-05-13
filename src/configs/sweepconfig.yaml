@@ -19,13 +19,13 @@ parameters:
   experiment.buffer_device: 
     value: "cuda"
   experiment.gamma:
-    values: [0.99, 0.95, 0.9]
+    value: 0.99
   experiment.lr:
     values: [0.0001, 0.00001]
   experiment.adam_eps:
     values: [0.00001, 0.000001]
   experiment.hard_target_update_frequency:
-    values: [50, 100]
+    values: [5, 50, 100]
   experiment.max_n_frames:
     value: 1_000_000
   experiment.on_policy_collected_frames_per_batch: 
@@ -33,7 +33,7 @@ parameters:
   experiment.on_policy_n_minibatch_iters:
     values: [10, 20, 40]
   experiment.on_policy_minibatch_size:
-    values: [128, 256, 400]
+    values: [64, 128, 256]
   experiment.evaluation:
     value: True
   experiment.evaluation_interval:
@@ -54,11 +54,15 @@ parameters:
   # algorithm hyperparameters #
   #############################
   algorithm.entropy_coef:
-      values: [0.05, 0.01, 0.001]
+      values: [0.1, 0.01, 0.001]
   algorithm.critic_coef:
       value: 1.0
   algorithm.lmbda:
-      values: [0.92, 0.9]
+      value: 0.95
+  algorithm.use_tanh_normal:
+      value: False
+  algorithm.minibatch_advantage:
+      values: [True, False]
 
   # # task hyperparameters
   # task.goal_type:
@@ -72,7 +76,7 @@ parameters:
       - [64, 64]
       - [128 ,64]
   model.activation_class:
-    value: torch.nn.ReLU
+    value: torch.nn.Tanh
 
 early_terminate:
   type: hyperband # run multiple configurations in parallel

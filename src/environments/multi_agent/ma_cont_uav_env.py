@@ -72,6 +72,10 @@ class MultiAgentContinuousUAV(Env):
             self.desired_orientations = desired_orientations
             self.desired_distances = desired_distances
         self.rng = None
+        self.goal_rew = 100.
+        self.agent_collision_rew = -1.
+        self.wall_rew = -1.
+        self.hole_rew = -1.
         
         # Grid Topology
         self.holes, self.goals = parse_map_emoji(self.map)
@@ -82,8 +86,8 @@ class MultiAgentContinuousUAV(Env):
         self._cell_size = 100
 
         # Environment parameters
-        self.goal = np.array(list(self.goals.values())[0])
-        self.observation_space = Box(low=-1, high=self.grid_width, shape=(2 + len(agents_pos),))
+        self.goal = self.frame2center(np.array(list(self.goals.values())[0]))
+        self.observation_space = Box(low=-1, high=self.grid_width, shape=(4 + len(agents_pos),))
         self.action_space = Box(low=-0.4, high=0.4, shape=(2,))
 
         # Reward related stuff
@@ -125,14 +129,18 @@ class MultiAgentContinuousUAV(Env):
         actions: dict[str, list[float, float]]: Actions for each agent.
         actions are [dx, dy] where positive dx is right and positive dy is up.
         """
-        new_pos = {agent: np.zeros((2,)) for agent in self.agents}
+        new_pos = {agent: np.zeros((2,), dtype=np.float32) for agent in self.agents}
         # iterate over the agents
+        new_observations = {}
         for agent, action in actions.items():
             if self.terminations[agent]:
                 # absorbing state for terminated agents
-                self.observations[agent] = np.array([-1.0, -1.0])
+                new_observations[agent] = np.array([-1.0, -1.0], dtype=np.float32)
                 self.rewards[agent] = 0.0
+                # remove the agent from the new positions
+                del new_pos[agent]
                 continue
+            # The policy activation function is the tanh function, the action space is between -1 and 1
             action = np.clip(action, self.action_space.low, self.action_space.high)
 
             new_pos[agent][0] = self.observations[agent][0] + action[0]
@@ -154,7 +162,12 @@ class MultiAgentContinuousUAV(Env):
                 self.truncations[agent] = True
 
 
-        return self.observations, self.rewards, self.terminations, self.truncations, logs
+        final_observations = deepcopy(self.observations)
+        for agent in new_observations:
+            final_observations[agent] = new_observations[agent]
+        
+
+        return final_observations, deepcopy(self.rewards), deepcopy(self.terminations), deepcopy(self.truncations), logs
 
     def reset(self, seed=42) -> Tuple[list, dict]:
         # super().reset(seed=seed)
@@ -180,7 +193,7 @@ class MultiAgentContinuousUAV(Env):
         #     self.observations[agent] = np.array([x, y])
         #     agents_position.append((x, y))
         self.frames = []
-        return self.observations, {}
+        return deepcopy(self.observations), {}
     
     def check_initial_position(self, x: int, y: int, agents_position: list[tuple[int, int]]) -> bool:
         """
@@ -279,42 +292,9 @@ class MultiAgentContinuousUAV(Env):
         rewards = {agent: 0 for agent in self.agents}
         log = {agent: {} for agent in self.agents}
         # don't update the agent positions if they collide 
-        update_agent = {agent: True for agent in self.agents}
-        for agent in new_pos:
-            # check for collisions with walls
-            if new_pos[agent][0] <= 0 or new_pos[agent][0] >= self.size:
-                update_agent[agent] = False
-                rewards[agent] = -1.
-                log[agent]["WALL"] = True
-            if new_pos[agent][1] <= 0 or new_pos[agent][1] >= self.size:
-                update_agent[agent] = False
-                rewards[agent] = -1.
-                log[agent]["WALL"] = True
-            # check for collisions with holes
-            for hole in self.holes:
-                if self.is_inside_cell(new_pos[agent], hole):
-                    update_agent[agent] = False
-                    rewards[agent] = -10.
-                    log[agent]["HOLE"] = True                   
-
-        # check for collisions with other agents
-        for i, agent1 in enumerate(new_pos):
-            for j, agent2 in enumerate(new_pos):
-                if i >= j:
-                    continue
-                else:
-                    if check_uav_collision(new_pos[agent1], new_pos[agent2], self.collision_radius):
-                        rewards[agent1] = -1.
-                        rewards[agent2] = -1.
-                        log[agent1]["COLLISION"] = True
-                        log[agent2]["COLLISION"] = True
-                        update_agent[agent1] = False
-                        update_agent[agent2] = False
-        
-        # for the remaining agents, check the reward
-        for agent in new_pos:
-            if update_agent[agent]:
-                continue
+        update_agent = {agent: True for agent in new_pos}
+        # Check if agents are inside the goal. In this case we ignore collisions
+        for agent_num1, agent in enumerate(new_pos):
             if self.reward_type == RewardType.dense:
                 goal_distance = np.linalg.norm(new_pos[agent] - self.goal)
                 rewards[agent] = -goal_distance
@@ -326,8 +306,9 @@ class MultiAgentContinuousUAV(Env):
                 if self.task == "reach_target":
                     if self.is_inside_cell(new_pos[agent], self.goal):
                         log[agent]["GOAL REACHED"] = True
-                        rewards[agent] = 30.
+                        rewards[agent] = self.goal_rew
                         self.terminations[agent] = True
+                        continue # if the agent is inside the goal, we don't want to check for collisions
                 elif self.task == "encircle_target":
                     goal_pos = self.goal
                     distance_from_goal = np.linalg.norm(new_pos[agent] - goal_pos)
@@ -336,9 +317,41 @@ class MultiAgentContinuousUAV(Env):
                     # we want the distance from the goal to be in a portion of crown around the goal
                     if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
                         if self.desired_orientation[agent][0] < angle_from_goal < self.desired_orientation[agent][1]:
-                            rewards[agent] = 10.
+                            rewards[agent] = self.goal_rew
                             log[agent]["GOAL REACHED"] = True
                             self.terminations[agent] = True
+                            continue # if the agent is inside the goal, we don't want to check for collisions
+
+            # check for collisions with walls
+            if new_pos[agent][0] <= 0 or new_pos[agent][0] >= self.size:
+                update_agent[agent] = False
+                rewards[agent] += self.wall_rew
+                log[agent]["WALL"] = True
+            if new_pos[agent][1] <= 0 or new_pos[agent][1] >= self.size:
+                update_agent[agent] = False
+                rewards[agent] += self.wall_rew
+                log[agent]["WALL"] = True
+            # check for collisions with holes
+            for hole in self.holes:
+                if self.is_inside_cell(new_pos[agent], hole):
+                    update_agent[agent] = False
+                    rewards[agent] += self.hole_rew
+                    log[agent]["HOLE"] = True                   
+
+            # check for collisions with other agents if the agent is active
+            for agent_num2, agent2 in enumerate(new_pos):
+                if agent_num1 >= agent_num2:
+                    continue
+                else:
+                    if check_uav_collision(new_pos[agent], new_pos[agent2], self.collision_radius):
+                        rewards[agent] += self.agent_collision_rew
+                        rewards[agent2] += self.agent_collision_rew
+                        log[agent]["COLLISION"] = True
+                        log[agent2]["COLLISION"] = True
+                        update_agent[agent] = False
+                        update_agent[agent2] = False
+        
+
         # update agent positions 
         for agent in new_pos.keys():
             if update_agent[agent]:
@@ -421,7 +434,10 @@ class MultiAgentContinuousUAV(Env):
 
     def frame2matrix(self, frame_pos: np.ndarray) -> np.ndarray:
         """
-        Convert a frame position to a matrix index.
+        Convert a frame (cartesian) position to a matrix index.
+        The frame is defined as a cartesian coordinate system with the origin at the top left corner. A frame position repesent the center of the cell.
+        Matrix is the matrix with the Q-table values. the origin is at the bottom left corner and it requires integer values
+        The grid instead has the y axis inverted, with respect to the frame and it also represents the center of the cell.
         """
         x, y = self.frame2grid(frame_pos)
 
@@ -434,8 +450,8 @@ class MultiAgentContinuousUAV(Env):
     def frame2grid(self, frame_pos: np.ndarray) -> np.ndarray:
         """
         Convert a frame (cartesian) position to a grid position.
-        The grid is defined as a matrix with the origin at the bottom left corner.
-        The frame is defined as a cartesian coordinate system with the origin at the top left corner.
+        The frame is defined as a cartesian coordinate system with the origin at the top left corner. A frame position repesent the center of the cell.
+        The grid is defined as a matrix with the origin at the bottom left corner (y axis inverted).
         """
         assert len(frame_pos) == 2
         x, y = frame_pos
@@ -450,7 +466,7 @@ class MultiAgentContinuousUAV(Env):
     def grid2frame(self, grid_pos: np.ndarray) -> np.ndarray:
         """
         Convert a grid position to a frame position.
-        The grid is defined as a matrix with the origin at the bottom left corner.
+        The grid is defined as a matrix with the origin at the bottom left corner and 
         The frame is defined as a cartesian coordinate system with the origin at the top left corner.
         """
         assert len(grid_pos) == 2
@@ -459,10 +475,23 @@ class MultiAgentContinuousUAV(Env):
         y = self.size - y
 
         # Centering the position
-        x += 0.5
-        y -= 0.5
+        # x += 0.5
+        # y -= 0.5
 
         return np.array([x, y])
+    
+    def frame2center(self, grid_pos: np.ndarray) -> np.ndarray:
+        """
+        Convert a grid position to its center position.
+        """
+        assert len(grid_pos) == 2
+        x, y = np.floor(grid_pos).astype(int)
+        # Centering the position
+        x += 0.5
+        y += 0.5
+
+        return np.array([x, y])
+
 
     def render_episode(self, agents: dict, max_steps: int = None):
         """

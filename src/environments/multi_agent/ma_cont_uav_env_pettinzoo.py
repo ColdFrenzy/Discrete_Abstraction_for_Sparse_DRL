@@ -13,8 +13,8 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
     def __init__(self,
         env,
         map: str = 10,
-        agents_pos: dict[str, list[float,float]] = {"a1":  [5.5, 4.5],
-                   "a2":  [0.5, 0.5],
+        agents_pos: dict[str, list[float,float]] = {"a1":  [5.5, 4.5], # [8.5, 2.5], # 
+                   "a2":  [0.5, 0.5], # [8.5, 0.5], # 
                    },
         OBST: bool = True,
         reward_type = RewardType.sparse,
@@ -79,7 +79,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
             one_hot_encoding = [0 for _ in range(len(self.possible_agents))]
             one_hot_encoding[self.agent_name_mapping[agent]] = 1.
             one_hot_encoding = np.array(one_hot_encoding)
-            new_observations[agent] = np.concat((one_hot_encoding, (observations[agent] / self.env.size)))
+            new_observations[agent] = np.concat((one_hot_encoding, (observations[agent] / self.env.size), (self.env.goal/self.env.size)))
         return new_observations, infos
 
     def step(self, actions):
@@ -92,7 +92,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
             one_hot_encoding = [0 for _ in range(len(self.possible_agents))]
             one_hot_encoding[self.agent_name_mapping[agent]] = 1.
             one_hot_encoding = np.array(one_hot_encoding)
-            new_observations[agent] = np.concat((one_hot_encoding, (observations[agent] / self.env.size))) if observations[agent][0] >= 0 else np.concat((one_hot_encoding, observations[agent]))
+            new_observations[agent] = np.concat((one_hot_encoding, (observations[agent] / self.env.size), (self.env.goal/self.env.size))) if observations[agent][0] >= 0 else np.concat((one_hot_encoding, observations[agent] , (self.env.goal/self.env.size)))
 
             if "GOAL REACHED" in infos[agent]:
                 new_infos[agent]["GOAL REACHED"] = infos[agent]["GOAL REACHED"]
@@ -100,10 +100,8 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
                 new_infos[agent] = {"GOAL REACHED":  False}
 
         # terminate the environment only if all agents are terminated
-        if all(env_terminations.values()):
-            env_terminations = {agent: True for agent in self.possible_agents}
-        else:
-            env_terminations = {agent: False for agent in self.possible_agents}
+        if not all(env_terminations.values()):
+            env_terminations = {agent: False for agent in env_terminations.keys()}
 
         return new_observations, rewards, env_terminations, env_truncations, new_infos
 
