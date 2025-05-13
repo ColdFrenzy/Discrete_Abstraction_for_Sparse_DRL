@@ -133,3 +133,5 @@ src/weights/
 src/episodes/
 .vscode/launch.json
 models/
+mappo_*
+Reviews_paper

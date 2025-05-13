@@ -84,8 +84,8 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
 
 
             # Extract step and reward values
-            steps = [event.step for event in event_acc.Scalars('rollout/ep_rew_mean')]
-            reward_values = [event.value for event in event_acc.Scalars('rollout/ep_rew_mean')]
+            steps = [event.step for event in event_acc.Scalars('rollout/ep_len_mean')]
+            reward_values = [event.value for event in event_acc.Scalars('rollout/ep_len_mean')]
 
             # Store rewards of each run
             all_steps.append(np.array(steps))
@@ -93,8 +93,9 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
 
         # Find the unique set of steps across all runs
         all_unique_steps = np.unique(np.concatenate(all_steps))
-
-
+        ###############
+        # REWARD PLOT #
+        ###############
         aligned_rewards = []
         for steps, rewards in zip(all_steps, all_rewards):
             # Create an interpolation function based on the current run's steps
@@ -106,19 +107,19 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
             aligned_rewards.append(new_rewards)
         # Convert the list of rewards to a NumPy array
         aligned_rewards = np.array(aligned_rewards)
-
         # Compute the mean and std across all runs (along axis=0 corresponds to different seeds/runs)
         mean_rewards = np.mean(aligned_rewards, axis=0)
         std_rewards = np.std(aligned_rewards, axis=0)
-
     
         plt.plot(all_unique_steps, mean_rewards, label=f"{algorithm_name}", lw=2)
         plt.fill_between(all_unique_steps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.2, )
     
-    plt.xlabel('Steps')
-    plt.ylabel('Reward')
-    plt.legend()
-    plt.show()
+    plt.xlabel('Steps', fontdict={'size': 23})
+    plt.ylabel('Ep_Len_Mean', fontdict={'size': 23})
+    plt.xticks(fontsize=15)
+    plt.yticks(fontsize=15)
+    plt.legend(fontsize=13, loc='upper left')
+    # plt.savefig("10x10_single_win_rate_plot_new.png", dpi=600)
 
 
     # Save the plot to a file (e.g., PNG)
@@ -143,7 +144,8 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
 if __name__ == "__main__":
     name = "10x10"
     tb_paths = {"SAC": f"sac_uav_tensorboard/{name}",
-               "SAC_HER": f"her_sac_uav_tensorboard/{name}"}
-               #"SAC_HR": f"sac_hr_uav_tensorboard/{name}"}
-    img_plot = ROOT_DIR / "plots" / f"{name}"
+               "SAC_HER": f"her_sac_uav_tensorboard/{name}",
+               "SAC_HR": f"sac_hr_uav_tensorboard/{name}",
+               "SAC_RELAX": f"sac_dense_uav_tensorboard/{name}"}
+    img_plot = ROOT_DIR / "plots" / f"{name}_single_ep_len_mean_plot.png"
     tensordboard_plot(tensorboard_path=tb_paths, save_path=img_plot)
