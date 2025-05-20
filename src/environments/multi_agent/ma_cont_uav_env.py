@@ -30,15 +30,19 @@ class MultiAgentContinuousUAV(Env):
         size: int = 10,
         agents_pos: dict[str, list[float,float]] = {"a1": [2.5, 4.5]},
         OBST: bool = False,
+        BS: bool = False,
         reward_type: RewardType = RewardType.dense,
         max_episode_steps: int = 100,
         task: str = "encircle_target", # reach_target or encircle_target
         desired_orientations: dict[str, list[float,float]] = None,
         desired_distances: dict[str, list[float,float]] = None,
+        optimal_view: float = 30.0,
         is_slippery: bool = False,
         is_rendered: bool = False,
         is_display: bool = True,
         collision_radius: float = 0.5,
+        bs_radius: float = 3,
+        total_bandwidth: float = 10,
     ):
         """
         Initialize the MultiAgentContinuousUAV environment.
@@ -51,9 +55,14 @@ class MultiAgentContinuousUAV(Env):
             task (str): Task type ("reach_target" or "encircle_target").
             desired_orientations (dict): Desired orientations for encircle_target task.
             desired_distances (dict): Desired distances for encircle_target task.
+            optimal_view (float): Optimal angular view for recording the target/goal. angle in degrees from north, counterclockwise.
             is_slippery (bool): Whether the environment is slippery.
             is_rendered (bool): Whether to render the environment.
             is_display (bool): Whether to display the environment.
+            collision_radius (float): Collision radius for the agents.
+            bs_radius (float): Base station radius for communication.
+            total_bandwidth (float): Total bandwidth for the environment.
+
         The grid has the following coordinates:
         (0,0)------------------(1,0)------------------(N,0)
         |                                                  |
@@ -62,24 +71,33 @@ class MultiAgentContinuousUAV(Env):
         """
         # General env parameters
         self.map = map
-        self.OBST = OBST
+        self.OBST = OBST    # if there is any obstacles
+        self.BS = BS        # if there is any Base Station
         self.reward_type = reward_type
         self.is_slippery = is_slippery
         self.transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
         self.task = task
         self.collision_radius = collision_radius
+        self.bs_radius = bs_radius
         if self.task == "encircle_target":
             self.desired_orientations = desired_orientations
             self.desired_distances = desired_distances
+            self.optimal_view = optimal_view
+            self.total_bandwidth = total_bandwidth
+            self.agents_reached_goal = {agent: False for agent in agents_pos}
         self.rng = None
         self.goal_rew = 100.
-        self.agent_collision_rew = -1.
+        self.agent_collision_rew = 0    # -1.
         self.wall_rew = -1.
         self.hole_rew = -1.
-        
+
         # Grid Topology
-        self.holes, self.goals = parse_map_emoji(self.map)
-        self.size = size # for now we consider square maps
+        if self.BS:
+            self.holes, self.goals, self.base_stations = parse_map_emoji(self.map)
+            self.base_stations = [self.frame2center(np.array(bs, dtype=np.float32)) for bs in self.base_stations]
+        else:
+            self.holes, self.goals = parse_map_emoji(self.map)
+        self.size = self.map.count("\n") - 1 # for now we consider square maps
         self.num_goals = len(self.goals)
         self.grid_height = self.size
         self.grid_width = self.size
@@ -149,10 +167,16 @@ class MultiAgentContinuousUAV(Env):
             if self.is_slippery:
                 new_pos[agent][0] += np.random.normal(0, 0.01)
                 new_pos[agent][1] += np.random.normal(0, 0.01)
+        # update positions 
+        rewards, logs = self.check_for_collisions(new_pos)
+        # update self.rewards
+        for agent in rewards:
+            self.rewards[agent] += rewards[agent]
 
-        self.rewards, logs = self.reward_function(
-            new_pos
-        )
+        if self.task == "encircle_target":
+            rewards, logs = self.reward_function_upstream()
+        elif self.task == "reach_target":
+            rewards, logs = self.reward_function()
         
         self.num_steps += 1
         # Check for maximum steps termination
@@ -217,7 +241,7 @@ class MultiAgentContinuousUAV(Env):
             self.is_pygame_initialized = True
             self.trajectories = {agent: [] for agent in self.agents}
             self.frames = []
-
+        # Remembed that when blit the images, the origin is at the top left corner of the coordinate passed
         for x in range(0, self.screen_width, self._cell_size):
             for y in range(0, self.screen_height, self._cell_size):
                 # Draw the ice
@@ -243,6 +267,25 @@ class MultiAgentContinuousUAV(Env):
             goal_text = self.font.render(str(goal_char), True, (0, 0, 0))
             text_rect = goal_text.get_rect(center=goal_rect.center)
             self.screen.blit(goal_text, text_rect)
+
+        # Draw the Base Stations
+        if self.BS: 
+            for bs in self.base_stations:
+                bs_x, bs_y = bs
+                bs_x = bs_x * self._cell_size - self.base_station_img.get_width() // 2
+                bs_y = bs_y * self._cell_size - self.base_station_img.get_height() // 2
+                self.screen.blit(self.base_station_img,  (bs_x, bs_y))
+                # Draw a circle around the base station to indicate its radius
+                surface = pygame.Surface((self._cell_size * 2*self.bs_radius, self._cell_size * 2*self.bs_radius), pygame.SRCALPHA)
+                pygame.draw.circle(
+                    surface,
+                    (0, 255, 0, 80),  # Green color with transparency
+                    # draw the circle in the middle of the surface
+                    (self._cell_size * self.bs_radius, self._cell_size * self.bs_radius),
+                    int(self.bs_radius * self._cell_size)
+                )
+                # the surface should be centered on the base station
+                self.screen.blit(surface, (bs_x + (self._cell_size//2)- (self._cell_size*self.bs_radius), bs_y + (self._cell_size//2) - (self._cell_size*self.bs_radius)))
 
         # Draw the agents
         for agent in self.observations:
@@ -288,40 +331,80 @@ class MultiAgentContinuousUAV(Env):
             
 
 
-    def reward_function(self, new_pos: dict[str, list[float, float]]) -> Tuple[list, dict, dict, dict, dict]:
+    def reward_function(self) -> Tuple[dict, dict]:
+        rewards = {agent: 0 for agent in self.agents}
+        log = {agent: {} for agent in self.agents}
+        # Check if agents are inside the goal. In this case we ignore collisions
+        for agent_num1, agent in enumerate(self.observations):
+            if self.reward_type == RewardType.dense:
+                goal_distance = np.linalg.norm(self.observations[agent] - self.goal)
+                rewards[agent] = -goal_distance
+            elif self.reward_type == RewardType.model:
+                i, j = self.frame2matrix(self.observations[agent])
+                rewards[agent] = self.values[agent][i, j] 
+            elif self.reward_type == RewardType.sparse:
+                if self.is_inside_cell(self.observations[agent], self.goal):
+                    log[agent]["GOAL REACHED"] = True
+                    rewards[agent] = self.goal_rew
+                    self.terminations[agent] = True
+                    continue # if the agent is inside the goal, we don't want to check for collisions
+
+        return rewards, log
+
+
+    def reward_function_upstream(self) -> Tuple[dict, dict]:
+        rewards = {agent: 0 for agent in self.agents}
+        log = {agent: {} for agent in self.agents}
+        # beta indicates if the agent is in the desired distance from the goal
+        agents_beta = self.compute_agents_beta
+        for agent in agents_beta:
+            goal_pos = self.goal
+            if all(goal_pos == self.observations[agent]):
+                # special case where the agent is inside the goal
+                angle_from_goal = 0
+            else:
+                # arctan2 is in radians and returns values in [-pi, pi] with respect to the x axis
+                angle_from_goal = np.arctan2(goal_pos[1] - self.observations[agent][1], goal_pos[0] - self.observations[agent][0])
+                angle_from_goal = (np.degrees(angle_from_goal) + 360) % 360  # Convert to degrees and normalize to [0, 360)
+            # we want the distance from the goal to be in a portion of crown around the goal
+            if self.agents_reached_goal[agent]:
+                # starts with the Streaming reward
+                # phi is the angular distance from the desired view.
+                delta_phi = smallest_positive_angle(angle_from_goal, self.optimal_view)
+                # compute cosine of the angle if the angle is in the range [0, 180] otherwise it is 0
+                if 0 <= delta_phi <= 90:
+                    rho = np.cos(np.radians(delta_phi))
+                else:
+                    rho = 0
+                distance_from_bs = np.linalg.norm(self.observations[agent] - self.base_stations[0])/ self.bs_radius
+                # eta is the spectral efficiency
+                eta = self.compute_spectral_efficiency(distance_from_bs)
+                # theta is the spectral efficiency w.r.t the upstream bandwidth and the number of UAVs
+                theta = eta * (self.total_bandwidth / len(agents_beta))
+                # r1 is the rewards that balance spectral efficiency and distance from the goal 
+                r1 = rho*theta
+                rewards[agent] = r1
+            # else:
+            #     if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
+            #         if self.desired_orientation[agent][0] < angle_from_goal < self.desired_orientation[agent][1]:
+            #             rewards[agent] = self.goal_rew
+            #             log[agent]["GOAL REACHED"] = True
+            #             self.terminations[agent] = True
+            #             continue # if the agent is inside the goal, we don't want to check for collisions
+        return rewards, log
+
+    def check_for_collisions(self, new_pos) -> Tuple[dict, dict]:
+        """
+        Check for collisions with walls, holes and other agents.
+        don't update the agent positions if they collide
+        :param new_pos: dict[str, list[float, float]]: New positions of the agents.
+        :return: Tuple[dict, dict]: rewards and logs for each agent.
+        """
         rewards = {agent: 0 for agent in self.agents}
         log = {agent: {} for agent in self.agents}
         # don't update the agent positions if they collide 
         update_agent = {agent: True for agent in new_pos}
-        # Check if agents are inside the goal. In this case we ignore collisions
         for agent_num1, agent in enumerate(new_pos):
-            if self.reward_type == RewardType.dense:
-                goal_distance = np.linalg.norm(new_pos[agent] - self.goal)
-                rewards[agent] = -goal_distance
-            elif self.reward_type == RewardType.model:
-                i, j = self.frame2matrix(new_pos[agent])
-                rewards[agent] = self.values[agent][i, j] 
-            elif self.reward_type == RewardType.sparse:
-                # Check for successful termination
-                if self.task == "reach_target":
-                    if self.is_inside_cell(new_pos[agent], self.goal):
-                        log[agent]["GOAL REACHED"] = True
-                        rewards[agent] = self.goal_rew
-                        self.terminations[agent] = True
-                        continue # if the agent is inside the goal, we don't want to check for collisions
-                elif self.task == "encircle_target":
-                    goal_pos = self.goal
-                    distance_from_goal = np.linalg.norm(new_pos[agent] - goal_pos)
-                    angle_from_goal = np.arctan2(goal_pos[1] - new_pos[agent][1], goal_pos[0] - new_pos[agent][0])
-                    angle_from_goal = (np.degrees(angle_from_goal) + 360) % 360  # Convert to degrees and normalize to [0, 360)
-                    # we want the distance from the goal to be in a portion of crown around the goal
-                    if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
-                        if self.desired_orientation[agent][0] < angle_from_goal < self.desired_orientation[agent][1]:
-                            rewards[agent] = self.goal_rew
-                            log[agent]["GOAL REACHED"] = True
-                            self.terminations[agent] = True
-                            continue # if the agent is inside the goal, we don't want to check for collisions
-
             # check for collisions with walls
             if new_pos[agent][0] <= 0 or new_pos[agent][0] >= self.size:
                 update_agent[agent] = False
@@ -351,7 +434,6 @@ class MultiAgentContinuousUAV(Env):
                         update_agent[agent] = False
                         update_agent[agent2] = False
         
-
         # update agent positions 
         for agent in new_pos.keys():
             if update_agent[agent]:
@@ -359,7 +441,6 @@ class MultiAgentContinuousUAV(Env):
                 self.trajectories[agent].append(self.observations[agent])
 
         return rewards, log
-
 
     def init_render(self):
         """
@@ -400,6 +481,10 @@ class MultiAgentContinuousUAV(Env):
         goal_img_path = IMAGE_DIR / "yellow.png"
         self.goal_img = scale(
             load(goal_img_path), (self._cell_size // 3, self._cell_size // 3)
+        )
+        base_station_img_path = IMAGE_DIR / "base_station.png"
+        self.base_station_img = scale(
+            load(base_station_img_path), (self._cell_size, self._cell_size)
         )
 
     def quit_render(self):
@@ -582,6 +667,58 @@ class MultiAgentContinuousUAV(Env):
 
 
 
+    def compute_spectral_efficiency(self, x_value: float) -> float:
+        """
+        Perform stepwise linear interpolation to find the y value for a given x value.
+
+        Args:
+            x_value (float): The x value for which to find the corresponding y value.
+        Returns:
+            float: The interpolated y value.
+        """
+        x = [0.1, 0.13, 0.16, 0.19, 0.22, 0.25, 0.28, 0.31, 0.34, 0.37, 0.4, 0.43, 0.46, 0.49, 0.52, 0.55]
+        y = [10., 9.10, 8.20, 7.40, 6.60, 5.90, 5.30, 4.80, 4.30, 3.90, 3.60, 3.30, 3., 2.80, 2.60, 2.40]  
+        # If x_value is outside the range, return the closest boundary value
+        if x_value < x[0]:
+            return y[0]
+        elif x_value >= x[-1]:
+            return 0.0
+
+        for i in range(len(x) - 1):
+            if x[i] <= x_value < x[i + 1]:
+                # Perform linear interpolation
+                slope = (y[i + 1] - y[i]) / (x[i + 1] - x[i])
+                return y[i] + slope * (x_value - x[i])
+            
+    def compute_streaming_reward(self, x_value: float) -> float:
+        raise NotImplementedError("Streaming reward is not implemented yet.")
+
+
+    def compute_angular_relevance(self, uav_pos: np.ndarray):
+        """
+        Compute the angular relevance of the UAV position with respect to the goal.
+
+        Args:
+            uav_pos (np.ndarray): Position of the UAV as a numpy array [x, y].
+
+        Returns:
+            float: The angular relevance value.
+        """
+        goal_pos = self.goal
+        angle_from_goal = np.arctan2(goal_pos[1] - uav_pos[1], goal_pos[0] - uav_pos[0])
+        angle_from_goal = (np.degrees(angle_from_goal) + 360) % 360
+    
+    # function parameter decorator
+    @property
+    def compute_agents_beta(self):
+        beta = []
+        for agent in self.agents:
+            distance_from_goal = np.linalg.norm(self.observations[agent] - self.goal)
+            if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
+                beta.append(agent)
+        return beta
+        
+
 def check_uav_collision(pos1: np.ndarray, pos2: np.ndarray, r: float) -> bool:
     """
     Check if two circles with centers pos1 and pos2 and radius r intersect.
@@ -597,6 +734,21 @@ def check_uav_collision(pos1: np.ndarray, pos2: np.ndarray, r: float) -> bool:
     distance_squared = np.sum((pos2 - pos1) ** 2)
     return distance_squared <= (2 * r) ** 2
 
+def smallest_positive_angle(angle1, angle2):
+    """
+    Compute the smallest angle between two angles in degrees.
+
+    Args:
+        angle1 (float): First angle in degrees.
+        angle2 (float): Second angle in degrees.
+
+    Returns:
+        float: The smallest angle between the two angles in degrees.
+    """
+    diff = (angle2 - angle1) % 360
+    if diff > 180:
+        diff = 360 - diff
+    return diff
 
 
 if __name__ == "__main__":

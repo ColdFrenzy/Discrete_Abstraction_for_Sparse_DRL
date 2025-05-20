@@ -173,6 +173,7 @@ def parse_map_string(map_string):
 
 
 def parse_map_emoji(map_string):
+    base_station = []
     holes = []
     goals = {}
     for y, row in enumerate(map_string.strip().split("\n")):
@@ -182,6 +183,8 @@ def parse_map_emoji(map_string):
             if char == " " and cell:  # Se trovi uno spazio e la cella non è vuota
                 if "⛔" in cell:  # Controlla se la cella contiene un buco
                     holes.append((x, y))
+                elif "📡" in cell:
+                    base_station.append((x,y))
                 elif (
                     cell.strip().isdigit()
                 ):  # Controlla se la cella contiene un numero/goal
@@ -199,7 +202,10 @@ def parse_map_emoji(map_string):
             elif cell.strip().isdigit():
                 goal_number = int(cell.strip())
                 goals[goal_number] = (x, y)
-    
+
+    if len(base_station) > 0:
+        return holes, goals, base_station
+
     return holes, goals
 
 

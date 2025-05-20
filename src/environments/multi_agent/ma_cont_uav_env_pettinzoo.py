@@ -3,35 +3,41 @@
 import functools
 import numpy as np
 from pettingzoo import ParallelEnv
-from src.environments.maps import MAPS_FREE
-from src.environments.maps import MAPS_OBST
-from src.definitions import RewardType, TransitionMode
+from src.environments.maps import MAPS_FREE, MAPS_OBST, MAPS_FREE_BASESTATION, MAPS_OBST_BASESTATION
 
 class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
     metadata = {"render_modes": ["human", "rgb_array"], "name": "multiagent_cont_uav_v0"}
 
     def __init__(self,
         env,
-        map: str = 10,
-        agents_pos: dict[str, list[float,float]] = {"a1":  [5.5, 4.5], # [8.5, 2.5], # 
-                   "a2":  [0.5, 0.5], # [8.5, 0.5], # 
+        map: str = 5,
+        # agents_pos: str: x, y
+        agents_pos: dict[str, list[float,float]] = {"a1":  [0.5, 0.5], # [8.5, 2.5], # 
+                   "a2":  [1.5, 0.5], # [8.5, 0.5], # 
+                   "a3":  [2.5, 0.5], # [8.5, 4.5], #
                    },
-        OBST: bool = True,
-        reward_type = RewardType.sparse,
+        OBST: bool = False, # Obstacles
+        BS: bool = True,    # Base station 
+        reward_type = 1,
         max_episode_steps: int = 200,
-        task: str = "reach_target", # reach_target or encircle_target
-        desired_orientations: dict[str, list[float,float]] = None,
-        desired_distances: dict[str, list[float,float]] = None,
+        task: str = "encircle_target", # reach_target or encircle_target
+        # for the desired orientation use the format [start_angle, end_angle]
+        desired_orientations: dict[str, list[float,float]] = {"a1": [44.,46.], "a2": [134.,136.], "a3": [269., 271.]}, # None,
+        desired_distances: dict[str, list[float,float]] = {"a1": [0.9, 1.1], "a2": [0.9, 1.1], "a3": [0.9, 1.1]}, # None,
+        optimal_view = 180., # east
+        total_bandwidth = 10, # in MHz
+        bs_radius = 4, 
         is_slippery: bool = False,
         is_rendered: bool = True,
         is_display: bool = False,
         collision_radius: float = 0.5,
         render_mode: str = "rgb_array",
+
         ):
         if OBST:
-            map_name = MAPS_OBST[map]
+            map_name = MAPS_OBST[map] if not BS else MAPS_OBST_BASESTATION[map]
         else:
-            map_name = MAPS_FREE[map]
+            map_name = MAPS_FREE[map] if not BS else MAPS_FREE_BASESTATION[map]
         ParallelEnv.__init__(self)
 
         self.env = env(
@@ -39,15 +45,19 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
             size=map,
             agents_pos=agents_pos,
             OBST=OBST, 
+            BS=BS,
             reward_type=reward_type,
             max_episode_steps=max_episode_steps,
             task=task,
             desired_orientations=desired_orientations,
             desired_distances=desired_distances,
+            optimal_view = optimal_view,
             is_slippery=is_slippery,
             is_rendered=is_rendered,
             is_display=is_display,
-            collision_radius=collision_radius
+            collision_radius=collision_radius,
+            bs_radius = bs_radius,
+            total_bandwidth = total_bandwidth,
         )
         self.possible_agents = self.env.agents
         # mapping between agent name and ID
@@ -107,8 +117,11 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
 
     def render(self, mode="rgb_array"):
         # render the environment
-        rgb_image = self.env.render(mode=mode)
-        return rgb_image
+        if self.render_mode == "human":
+            self.env.render(mode="human")
+        elif self.render_mode == "rgb_array": 
+            rgb_image = self.env.render(mode=mode)
+            return rgb_image
 
 if __name__ == "__main__":
     from pettingzoo.test import parallel_api_test
