@@ -42,7 +42,7 @@ class MultiAgentContinuousUAV(Env):
         is_display: bool = True,
         collision_radius: float = 0.5,
         bs_radius: float = 3,
-        total_bandwidth: float = 10,
+        total_bandwidth: float = 2,
     ):
         """
         Initialize the MultiAgentContinuousUAV environment.
@@ -87,9 +87,10 @@ class MultiAgentContinuousUAV(Env):
             self.agents_reached_goal = {agent: False for agent in agents_pos}
         self.rng = None
         self.goal_rew = 100.
+        self.agent_collision = False
         self.agent_collision_rew = 0    # -1.
-        self.wall_rew = -1.
-        self.hole_rew = -1.
+        self.wall_rew = 0
+        self.hole_rew = 0
 
         # Grid Topology
         if self.BS:
@@ -150,6 +151,8 @@ class MultiAgentContinuousUAV(Env):
         new_pos = {agent: np.zeros((2,), dtype=np.float32) for agent in self.agents}
         # iterate over the agents
         new_observations = {}
+        # reset rewards
+        self.rewards = {agent: 0 for agent in self.agents}
         for agent, action in actions.items():
             if self.terminations[agent]:
                 # absorbing state for terminated agents
@@ -168,7 +171,7 @@ class MultiAgentContinuousUAV(Env):
                 new_pos[agent][0] += np.random.normal(0, 0.01)
                 new_pos[agent][1] += np.random.normal(0, 0.01)
         # update positions 
-        rewards, logs = self.check_for_collisions(new_pos)
+        rewards, logs = self.update_positions(new_pos)
         # update self.rewards
         for agent in rewards:
             self.rewards[agent] += rewards[agent]
@@ -177,7 +180,10 @@ class MultiAgentContinuousUAV(Env):
             rewards, logs = self.reward_function_upstream()
         elif self.task == "reach_target":
             rewards, logs = self.reward_function()
-        
+
+        for agent in rewards:
+            self.rewards[agent] += rewards[agent] 
+
         self.num_steps += 1
         # Check for maximum steps termination
         if self.num_steps >= self._max_episode_steps:
@@ -255,7 +261,7 @@ class MultiAgentContinuousUAV(Env):
             hole_x = hole_x * self._cell_size
             hole_y = hole_y * self._cell_size
             self.screen.blit(self.hole_img, (hole_x, hole_y))
-
+        # Draw the goals
         for goal_char, (g_x, g_y) in self.goals.items():
             goal_rect = pygame.Rect(
                 g_x * self._cell_size,
@@ -267,6 +273,37 @@ class MultiAgentContinuousUAV(Env):
             goal_text = self.font.render(str(goal_char), True, (0, 0, 0))
             text_rect = goal_text.get_rect(center=goal_rect.center)
             self.screen.blit(goal_text, text_rect)
+            # Draw the circular crown around the goal
+            if self.task == "encircle_target":
+                surface = pygame.Surface((self._cell_size * 4, self._cell_size * 4), pygame.SRCALPHA)
+                # Draw the outer circle (radius 2)
+                pygame.draw.circle(
+                surface,
+                (0, 0, 255, 50),  # Blue color with transparency
+                (self._cell_size * 2, self._cell_size * 2),
+                int(self.desired_distances["a1"][1] * self._cell_size)
+                )
+                # Draw the inner circle (radius 1)
+                pygame.draw.circle(
+                surface,
+                (0, 0, 0, 0),  # Fully transparent
+                (self._cell_size * 2, self._cell_size * 2),
+                int(self.desired_distances["a1"][0] * self._cell_size)
+                )
+                # Cut out the inner circle to create the crown effect
+                pygame.draw.circle(
+                surface,
+                (0, 0, 255, 0),  # Transparent color
+                (self._cell_size * 2, self._cell_size * 2),
+                int(self.desired_distances["a1"][0] * self._cell_size),
+                width=0
+                )
+                # Position the surface centered on the goal
+                goal_x, goal_y = self.goal
+                self.screen.blit(surface, (
+                int(goal_x * self._cell_size - 2 * self._cell_size),
+                int(goal_y * self._cell_size - 2 * self._cell_size)
+                ))
 
         # Draw the Base Stations
         if self.BS: 
@@ -353,6 +390,10 @@ class MultiAgentContinuousUAV(Env):
 
 
     def reward_function_upstream(self) -> Tuple[dict, dict]:
+        ###########################################################################################
+        # When computing angles, remember that the origin is at the top left corner of the screen #
+        # we need to flip the y axis                                                              #
+        ############################################################################################
         rewards = {agent: 0 for agent in self.agents}
         log = {agent: {} for agent in self.agents}
         # beta indicates if the agent is in the desired distance from the goal
@@ -364,10 +405,8 @@ class MultiAgentContinuousUAV(Env):
                 angle_from_goal = 0
             else:
                 # arctan2 is in radians and returns values in [-pi, pi] with respect to the x axis
-                angle_from_goal = np.arctan2(goal_pos[1] - self.observations[agent][1], goal_pos[0] - self.observations[agent][0])
+                angle_from_goal = np.arctan2(-self.observations[agent][1] + goal_pos[1], self.observations[agent][0]- goal_pos[0])
                 angle_from_goal = (np.degrees(angle_from_goal) + 360) % 360  # Convert to degrees and normalize to [0, 360)
-            # we want the distance from the goal to be in a portion of crown around the goal
-            if self.agents_reached_goal[agent]:
                 # starts with the Streaming reward
                 # phi is the angular distance from the desired view.
                 delta_phi = smallest_positive_angle(angle_from_goal, self.optimal_view)
@@ -383,7 +422,7 @@ class MultiAgentContinuousUAV(Env):
                 theta = eta * (self.total_bandwidth / len(agents_beta))
                 # r1 is the rewards that balance spectral efficiency and distance from the goal 
                 r1 = rho*theta
-                rewards[agent] = r1
+                rewards[agent] = float(r1)
             # else:
             #     if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
             #         if self.desired_orientation[agent][0] < angle_from_goal < self.desired_orientation[agent][1]:
@@ -393,7 +432,7 @@ class MultiAgentContinuousUAV(Env):
             #             continue # if the agent is inside the goal, we don't want to check for collisions
         return rewards, log
 
-    def check_for_collisions(self, new_pos) -> Tuple[dict, dict]:
+    def update_positions(self, new_pos) -> Tuple[dict, dict]:
         """
         Check for collisions with walls, holes and other agents.
         don't update the agent positions if they collide
@@ -420,19 +459,19 @@ class MultiAgentContinuousUAV(Env):
                     update_agent[agent] = False
                     rewards[agent] += self.hole_rew
                     log[agent]["HOLE"] = True                   
-
-            # check for collisions with other agents if the agent is active
-            for agent_num2, agent2 in enumerate(new_pos):
-                if agent_num1 >= agent_num2:
-                    continue
-                else:
-                    if check_uav_collision(new_pos[agent], new_pos[agent2], self.collision_radius):
-                        rewards[agent] += self.agent_collision_rew
-                        rewards[agent2] += self.agent_collision_rew
-                        log[agent]["COLLISION"] = True
-                        log[agent2]["COLLISION"] = True
-                        update_agent[agent] = False
-                        update_agent[agent2] = False
+            if self.agent_collision:
+                # check for collisions with other agents if the agent is active
+                for agent_num2, agent2 in enumerate(new_pos):
+                    if agent_num1 >= agent_num2:
+                        continue
+                    else:
+                        if check_uav_collision(new_pos[agent], new_pos[agent2], self.collision_radius):
+                            rewards[agent] += self.agent_collision_rew
+                            rewards[agent2] += self.agent_collision_rew
+                            log[agent]["COLLISION"] = True
+                            log[agent2]["COLLISION"] = True
+                            update_agent[agent] = False
+                            update_agent[agent2] = False
         
         # update agent positions 
         for agent in new_pos.keys():
@@ -507,13 +546,13 @@ class MultiAgentContinuousUAV(Env):
         # cell_coord = self.grid2frame(cell)
         cell_coord = cell
         inside = True
-        if pos[0] < cell_coord[0] - 0.5:
+        if pos[0] < cell_coord[0]:
             inside = False  # left
-        if pos[0] > cell_coord[0] + 0.5:
+        if pos[0] > cell_coord[0] + 1:
             inside = False  # right
-        if pos[1] < cell_coord[1] - 0.5:
+        if pos[1] < cell_coord[1]:
             inside = False  # bottom
-        if pos[1] > cell_coord[1] + 0.5:
+        if pos[1] > cell_coord[1] + 1:
             inside = False  # top
         return inside
 
@@ -682,7 +721,7 @@ class MultiAgentContinuousUAV(Env):
         if x_value < x[0]:
             return y[0]
         elif x_value >= x[-1]:
-            return 0.0
+            return y[-1]
 
         for i in range(len(x) - 1):
             if x[i] <= x_value < x[i + 1]:
@@ -714,7 +753,7 @@ class MultiAgentContinuousUAV(Env):
         beta = []
         for agent in self.agents:
             distance_from_goal = np.linalg.norm(self.observations[agent] - self.goal)
-            if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
+            if self.desired_distances[agent][0] < distance_from_goal < self.desired_distances[agent][1]:
                 beta.append(agent)
         return beta
         

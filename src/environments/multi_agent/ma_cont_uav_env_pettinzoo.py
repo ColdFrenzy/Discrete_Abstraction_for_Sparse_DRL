@@ -23,9 +23,9 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
         task: str = "encircle_target", # reach_target or encircle_target
         # for the desired orientation use the format [start_angle, end_angle]
         desired_orientations: dict[str, list[float,float]] = {"a1": [44.,46.], "a2": [134.,136.], "a3": [269., 271.]}, # None,
-        desired_distances: dict[str, list[float,float]] = {"a1": [0.9, 1.1], "a2": [0.9, 1.1], "a3": [0.9, 1.1]}, # None,
+        desired_distances: dict[str, list[float,float]] = {"a1": [0.8, 1.2], "a2": [0.8, 1.2], "a3": [0.8, 1.2]}, # None,
         optimal_view = 180., # east
-        total_bandwidth = 10, # in MHz
+        total_bandwidth = 2, # in MHz
         bs_radius = 4, 
         is_slippery: bool = False,
         is_rendered: bool = True,
