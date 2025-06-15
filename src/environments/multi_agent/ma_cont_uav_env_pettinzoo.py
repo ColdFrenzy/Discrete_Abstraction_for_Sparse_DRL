@@ -10,13 +10,13 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
 
     def __init__(self,
         env,
-        map: str = 5,
+        map: str = 10,
         # agents_pos: str: x, y
-        agents_pos: dict[str, list[float,float]] = {"a1":  [0.5, 0.5], # [8.5, 2.5], # 
-                   "a2":  [1.5, 0.5], # [8.5, 0.5], # 
-                   "a3":  [2.5, 0.5], # [8.5, 4.5], #
+        agents_pos: dict[str, list[float,float]] = {"a1":  [0.5, 9.5], # [0.5, 0.5],
+                   "a2":  [9.5, 0.5], # [1.5, 0.5],
+                   "a3":  [0.5, 0.5], # [2.5, 0.5], 
                    },
-        OBST: bool = False, # Obstacles
+        OBST: bool = True, # Obstacles
         BS: bool = True,    # Base station 
         reward_type = 1,
         max_episode_steps: int = 200,
@@ -26,7 +26,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
         desired_distances: dict[str, list[float,float]] = {"a1": [0.8, 1.2], "a2": [0.8, 1.2], "a3": [0.8, 1.2]}, # None,
         optimal_view = 180., # east
         total_bandwidth = 2, # in MHz
-        bs_radius = 4, 
+        bs_radius = 8, 
         is_slippery: bool = False,
         is_rendered: bool = True,
         is_display: bool = False,

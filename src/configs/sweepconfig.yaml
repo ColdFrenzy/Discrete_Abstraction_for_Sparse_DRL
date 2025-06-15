@@ -5,7 +5,7 @@ entity: "francesco_diag"
 method: bayes 
 
 metric:
-  name: eval/win_rate
+  name: eval/reward/episode_reward_mean
   goal: maximize
 
 parameters:

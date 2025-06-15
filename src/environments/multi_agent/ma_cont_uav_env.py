@@ -398,6 +398,7 @@ class MultiAgentContinuousUAV(Env):
         log = {agent: {} for agent in self.agents}
         # beta indicates if the agent is in the desired distance from the goal
         agents_beta = self.compute_agents_beta
+        agent_angle_from_goal = {}
         for agent in agents_beta:
             goal_pos = self.goal
             if all(goal_pos == self.observations[agent]):
@@ -407,6 +408,7 @@ class MultiAgentContinuousUAV(Env):
                 # arctan2 is in radians and returns values in [-pi, pi] with respect to the x axis
                 angle_from_goal = np.arctan2(-self.observations[agent][1] + goal_pos[1], self.observations[agent][0]- goal_pos[0])
                 angle_from_goal = (np.degrees(angle_from_goal) + 360) % 360  # Convert to degrees and normalize to [0, 360)
+                agent_angle_from_goal[agent] = angle_from_goal
                 # starts with the Streaming reward
                 # phi is the angular distance from the desired view.
                 delta_phi = smallest_positive_angle(angle_from_goal, self.optimal_view)
@@ -422,7 +424,21 @@ class MultiAgentContinuousUAV(Env):
                 theta = eta * (self.total_bandwidth / len(agents_beta))
                 # r1 is the rewards that balance spectral efficiency and distance from the goal 
                 r1 = rho*theta
-                rewards[agent] = float(r1)
+                rewards[agent] = float(r1) / 100 # TODO: manual scaling, implement a better scaling
+
+            # check if the angular distance between the agents is enough
+            angular_distance = True if len(agent_angle_from_goal) > 1 else False
+            for agent1 in agent_angle_from_goal:
+                for agent2 in agent_angle_from_goal:
+                    if agent1 == agent2:
+                        continue
+                    angle_diff = smallest_positive_angle(agent_angle_from_goal[agent1], agent_angle_from_goal[agent2])
+                    if angle_diff < (360 / (len(agents_beta)+1)):
+                        angular_distance = False
+            if angular_distance:
+                for agent in agent_angle_from_goal:
+                    rewards[agent] += 1
+
             # else:
             #     if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
             #         if self.desired_orientation[agent][0] < angle_from_goal < self.desired_orientation[agent][1]:
