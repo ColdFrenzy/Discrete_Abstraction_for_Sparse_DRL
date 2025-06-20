@@ -154,34 +154,34 @@ def statistical_significance(tensorboard_path: str, threshold):
 
 
             # Extract step and reward values
-            # steps = [event.step for event in event_acc.Scalars('custom/win_rate')]
-            # reward_values = [event.value for event in event_acc.Scalars('custom/win_rate')]
-            steps = [event.step for event in event_acc.Scalars('rollout/ep_len_mean')]
-            reward_values = [event.value for event in event_acc.Scalars('rollout/ep_len_mean')]
+            steps = [event.step for event in event_acc.Scalars('custom/win_rate')]
+            reward_values = [event.value for event in event_acc.Scalars('custom/win_rate')]
+            # steps = [event.step for event in event_acc.Scalars('rollout/ep_len_mean')]
+            # reward_values = [event.value for event in event_acc.Scalars('rollout/ep_len_mean')]
             
             # success_step is the first step after which the reward is always above the threshold
             success_step = -1
             for step, rew in zip(steps, reward_values):
-                if rew >= threshold:
+                if rew >= threshold and success_step == -1:
                     success_step = step
                 if rew < threshold:
                     success_step = -1
 
-            success_step[algorithm_name].append(success_step)
+            all_success_steps[algorithm_name].append(success_step)
 
-        # compute p-value for each algorithm
-        all_success_steps[algorithm_name] = np.array(all_success_steps[algorithm_name])
-        success_steps = all_success_steps[algorithm_name]
+    # compute p-value for each algorithm
+    all_success_steps[algorithm_name] = np.array(all_success_steps[algorithm_name])
+    success_steps = all_success_steps[algorithm_name]
 
         
 
 if __name__ == "__main__":
     name = "10x10"
-    tb_paths = {"SAC": f"sac_uav_tensorboard/{name}",
-               "SAC_HER": f"her_sac_uav_tensorboard/{name}",
-               "SAC_HR": f"sac_hr_uav_tensorboard/{name}",
-               "SAC_RELAX": f"sac_dense_uav_tensorboard/{name}"}
+    tb_paths = {"SAC": f"sa_sac_uav_tensorboard/{name}",
+               "SAC_HER": f"sa_her_sac_uav_tensorboard/{name}",
+               "SAC_HR": f"sa_sac_hr_uav_tensorboard/{name}",
+               "SAC_RELAX": f"sa_sac_dense_uav_tensorboard/{name}"}
     img_plot = ROOT_DIR / "plots" / f"{name}"
     # tensordboard_plot(tensorboard_path=tb_paths, save_path=img_plot)
 
-    statistical_significance(tb_paths, threshold=0.5)
+    statistical_significance(tb_paths, threshold=0.1)
