@@ -21,7 +21,7 @@ from src.environments.multi_agent.rm_environment_wrapper import (
 from src.utils.utils import *
 from src.utils.paths import QTABLE_DIR
 from src.utils.utils import parse_map_emoji
-from src.utils.plot import save_reward_plots
+from src.plot import save_reward_plots
 
 
 

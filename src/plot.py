@@ -139,8 +139,41 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
 
     # print(f"Aggregated data logged to: {aggregated_log_dir}")
 
+def statistical_significance(tensorboard_path: str, threshold):
+
+    all_success_steps = {k : [] for k in tensorboard_path.keys()}
+    for algorithm_name, log_dir in tensorboard_path.items():
+        all_rewards = []
+        all_steps = []
+        run_dirs = [os.path.join(log_dir, run) for run in os.listdir(log_dir)]
+
+        # Read the event files from each run directory
+        for run in run_dirs:
+            event_acc = event_accumulator.EventAccumulator(run)
+            event_acc.Reload()
 
 
+            # Extract step and reward values
+            # steps = [event.step for event in event_acc.Scalars('custom/win_rate')]
+            # reward_values = [event.value for event in event_acc.Scalars('custom/win_rate')]
+            steps = [event.step for event in event_acc.Scalars('rollout/ep_len_mean')]
+            reward_values = [event.value for event in event_acc.Scalars('rollout/ep_len_mean')]
+            
+            # success_step is the first step after which the reward is always above the threshold
+            success_step = -1
+            for step, rew in zip(steps, reward_values):
+                if rew >= threshold:
+                    success_step = step
+                if rew < threshold:
+                    success_step = -1
+
+            success_step[algorithm_name].append(success_step)
+
+        # compute p-value for each algorithm
+        all_success_steps[algorithm_name] = np.array(all_success_steps[algorithm_name])
+        success_steps = all_success_steps[algorithm_name]
+
+        
 
 if __name__ == "__main__":
     name = "10x10"
@@ -149,4 +182,6 @@ if __name__ == "__main__":
                "SAC_HR": f"sac_hr_uav_tensorboard/{name}",
                "SAC_RELAX": f"sac_dense_uav_tensorboard/{name}"}
     img_plot = ROOT_DIR / "plots" / f"{name}"
-    tensordboard_plot(tensorboard_path=tb_paths, save_path=img_plot)
+    # tensordboard_plot(tensorboard_path=tb_paths, save_path=img_plot)
+
+    statistical_significance(tb_paths, threshold=0.5)
