@@ -129,6 +129,7 @@ class MultiAgentContinuousUAV(Env):
         self.trajectories = {agent: [] for agent in self.agents}
         self.terminations = {agent: False for agent in self.agents}
         self.truncations = {agent: False for agent in self.agents}
+        self.switch_reward = {agent: False for agent in self.agents}  # when using reward_type == RewardType.model, this is used to switch the reward from the model to the real reward
         
         # Rendering stuff
         self.is_pygame_initialized = False
@@ -209,6 +210,7 @@ class MultiAgentContinuousUAV(Env):
         self.rewards = {agent: 0 for agent in self.agents}
         self.trajectories = {agent: [] for agent in self.agents}
         self.observations = deepcopy(self.agents_initial_pos)
+        self.switch_reward = {agent: False for agent in self.agents}
         # Reset the agents' positions. Uncomment the following for random positions
         # agents_position = []
         # self.observations = {}
@@ -393,12 +395,23 @@ class MultiAgentContinuousUAV(Env):
         ###########################################################################################
         # When computing angles, remember that the origin is at the top left corner of the screen #
         # we need to flip the y axis                                                              #
-        ############################################################################################
+        ###########################################################################################
         rewards = {agent: 0 for agent in self.agents}
         log = {agent: {} for agent in self.agents}
         # beta indicates if the agent is in the desired distance from the goal
         agents_beta = self.compute_agents_beta
         agent_angle_from_goal = {}
+        # if we are using the model reward type, agents will receive the model reward reward up until they are close enough to the goal
+        if self.reward_type == RewardType.model:
+            for agent in self.agents:
+                self.compute_switch_reward(agent)
+                if self.switch_reward[agent]:
+                    continue
+                else:
+                    i, j = self.frame2matrix(self.observations[agent])
+                    reward += self.values[i, j] 
+
+
         for agent in agents_beta:
             goal_pos = self.goal
             if all(goal_pos == self.observations[agent]):
@@ -772,7 +785,21 @@ class MultiAgentContinuousUAV(Env):
             if self.desired_distances[agent][0] < distance_from_goal < self.desired_distances[agent][1]:
                 beta.append(agent)
         return beta
-        
+    
+    def compute_switch_reward(self, agent: str) -> float:
+        """
+        Compute the distance from the goal for a given agent.
+
+        Args:
+            agent (str): The agent's identifier.
+
+        Returns:
+            float: The distance from the goal.
+        """
+
+        distance_from_goal = np.linalg.norm(self.observations[agent] - self.goal)
+        if distance_from_goal < 2*self.desired_distances:
+            self.switch_reward[agent] = True
 
 def check_uav_collision(pos1: np.ndarray, pos2: np.ndarray, r: float) -> bool:
     """

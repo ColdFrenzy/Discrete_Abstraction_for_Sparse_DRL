@@ -18,7 +18,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
                    },
         OBST: bool = True, # Obstacles
         BS: bool = True,    # Base station 
-        reward_type = 1,
+        reward_type = 2, # dense = 0, sparse = 1, model = 2
         max_episode_steps: int = 200,
         task: str = "encircle_target", # reach_target or encircle_target
         # for the desired orientation use the format [start_angle, end_angle]

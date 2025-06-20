@@ -332,18 +332,22 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
 
     # Add agents to the environment
     a1 = AgentRL("a1", env)
-    a1.set_initial_position(0, 0)  # Aggiungo la pos anche allo stato dell'agente
+    a1.set_initial_position(0, 9)  # Aggiungo la pos anche allo stato dell'agente [0, 0]
     a1.add_state_encoder(StateEncoderUAV(a1))
 
-    
-    # a3 = AgentRL("a3", env)
-    # a3.set_initial_position(size - 1, size - 1)  # Aggiungo la pos anche allo stato dell'agente
-    # a3.add_state_encoder(StateEncoderUAV(a3))
+    a2 = AgentRL("a2", env)
+    a2.set_initial_position(size - 1, 0)  # (size - 1, size - 1)
+    a2.add_state_encoder(StateEncoderUAV(a2))
+
+    a3 = AgentRL("a3", env)
+    a3.set_initial_position(0, 0)  # (size - 1, size - 1)
+    a3.add_state_encoder(StateEncoderUAV(a3))
 
     # Adding actions
     for action in env.get_actions():
         a1.add_action(action)
-        # a3.add_action(action)
+        a2.add_action(action)
+        a3.add_action(action)
 
     # Reward Machine States (TODO: generalize this)
     state_start = "state0"
@@ -364,14 +368,17 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
     RM_1 = RewardMachine(transitions, event_detector)
     a1.set_reward_machine(RM_1)
     env.add_agent(a1)
-
     # Crea la RM
-    # RM_3 = RewardMachine(transitions, event_detector)
-    # a3.set_reward_machine(RM_1)
-    # env.add_agent(a3)
+    RM_2 = RewardMachine(transitions, event_detector)
+    a2.set_reward_machine(RM_2)
+    env.add_agent(a2)
+    # Crea la RM
+    RM_3 = RewardMachine(transitions, event_detector)
+    a3.set_reward_machine(RM_3)
+    env.add_agent(a3)
 
     # Avvolgi l'ambiente con il wrapper RMEnvironmentWrapper
-    rm_env = RMEnvironmentWrapper(env, [a1]) # aggiungici a3 se vuoi averne 2 nella lista
+    rm_env = RMEnvironmentWrapper(env, [a1,a2,a3]) # aggiungici a3 se vuoi averne 2 nella lista
 
     # Avvolgi l'ambiente con il wrapper RMEnvironmentWrapper
     # rm_env = RMEnvironmentWrapper(env, [a3])
@@ -386,16 +393,29 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
         state_space_size=env.grid_width * env.grid_height * RM_1.numbers_state(),
         action_space_size=4,
     )
-    # alg_3 = QLearning(
-    #     state_space_size=env.grid_width * env.grid_height * RM_3.numbers_state(),
-    #     action_space_size=4,
-    #     s_a_threshold=500,
-    #     max_reward=10,
-    #     gamma=gamma,
-    #     epsilon_one=0.99,
-    # )
+    alg_2 = QLearning(
+        gamma=gamma,
+        action_selection='greedy',
+        learning_rate=None,
+        epsilon_start=1.0,
+        epsilon_end=0.2,
+        epsilon_decay=0.99,
+        state_space_size=env.grid_width * env.grid_height * RM_1.numbers_state(),
+        action_space_size=4,
+    )
+    alg_3 = QLearning(
+        gamma=gamma,
+        action_selection='greedy',
+        learning_rate=None,
+        epsilon_start=1.0,
+        epsilon_end=0.2,
+        epsilon_decay=0.99,
+        state_space_size=env.grid_width * env.grid_height * RM_1.numbers_state(),
+        action_space_size=4,
+    )
     a1.set_learning_algorithm(alg_1)
-    # a3.set_learning_algorithm(alg_3)
+    a2.set_learning_algorithm(alg_2)
+    a3.set_learning_algorithm(alg_3)
     
     train(rm_env, num_episodes)
 
@@ -424,6 +444,6 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
                     x, y = hole
                     qtable[agent.name][y, x] = 0.   
     
-        transition_mode = "stochastic" if stochastic else "deterministic" # TODO: hardcoded
+        transition_mode = "stochastic" if stochastic else "deterministic" 
         os.makedirs(f"{QTABLE_DIR}/{transition_mode}/single_agent", exist_ok=True)
         np.savez_compressed(f"{QTABLE_DIR}/{transition_mode}/single_agent/qtable_{size}_obstacles_{OBST}.npz", **qtable)
