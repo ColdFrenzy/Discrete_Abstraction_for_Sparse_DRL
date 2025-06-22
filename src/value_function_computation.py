@@ -142,12 +142,12 @@ def compute_value_function(map_name, size, OBST, num_episodes = 10000, gamma: fl
 
     # Add agents to the environment
     a1 = AgentRL("a1", env)
-    a1.set_initial_position(0, 0)  # Aggiungo la pos anche allo stato dell'agente
+    a1.set_initial_position(5, 4)  # Aggiungo la pos anche allo stato dell'agente
     a1.add_state_encoder(StateEncoderUAV(a1))
 
     
     a3 = AgentRL("a3", env)
-    a3.set_initial_position(0, size-2)  # Aggiungo la pos anche allo stato dell'agente
+    a3.set_initial_position(0, 9)  # Aggiungo la pos anche allo stato dell'agente
     a3.add_state_encoder(StateEncoderUAV(a3))
 
     # Adding actions
@@ -218,6 +218,9 @@ def compute_value_function(map_name, size, OBST, num_episodes = 10000, gamma: fl
 
                 for (x,y) in goals.values():
                     qtable[agent.name][y, x] = 15.
+                    
+                for (x,y) in holes:
+                    qtable[agent.name][y, x] = -1.
                             
         transition_mode = "stochastic" if stochastic else "deterministic" # TODO: hardcoded
         os.makedirs(f"{QTABLE_DIR}/{transition_mode}", exist_ok=True)

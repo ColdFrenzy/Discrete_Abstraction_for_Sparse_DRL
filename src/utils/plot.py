@@ -73,15 +73,18 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
     # Initialize figure for plotting
     plt.figure(figsize=(10, 6))
     for algorithm_name, log_dir in tensorboard_path.items():
+        
         all_rewards = []
         all_steps = []
         run_dirs = [os.path.join(log_dir, run) for run in os.listdir(log_dir)]
-
+        
+        print(run_dirs)
+        exit()
+        
         # Read the event files from each run directory
         for run in run_dirs:
             event_acc = event_accumulator.EventAccumulator(run)
             event_acc.Reload()
-
 
             # Extract step and reward values
             steps = [event.step for event in event_acc.Scalars('rollout/ep_len_mean')]
@@ -121,9 +124,9 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
     plt.legend(fontsize=13, loc='upper left')
     # plt.savefig("10x10_single_win_rate_plot_new.png", dpi=600)
 
-
     # Save the plot to a file (e.g., PNG)
-    plt.savefig(save_path)
+    # os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    # plt.savefig(save_path)
 
     # Close the plot to free up memory
     plt.close()

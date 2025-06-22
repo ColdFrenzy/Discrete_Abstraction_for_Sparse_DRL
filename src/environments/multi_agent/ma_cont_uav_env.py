@@ -43,25 +43,36 @@ class MultiAgentContinuousUAV(ContinuousUAV):
         """
 
         logs = []
-
+        
         for i, action in enumerate(actions):
+            
+            print(i)
+            print(actions)
+            print(self.terminated)
+            print(self.truncated)
+            
             if self.terminated[i] or self.truncated[i]:
                 continue
             self.prev_observations[i] = self.observations[i]
-            action = np.clip(action.cpu().numpy(), self.action_space.low, self.action_space.high)
+            action = np.clip(action, self.action_space.low, self.action_space.high)
+            
+            if type(self.observations[i]) == dict:
+                observation = self.observations[i]['observation']
 
-            new_x = self.observations[i][0] + action[0]
-            new_y = self.observations[i][1] + action[1]
+            new_x = observation[0] + action[0]
+            new_y = observation[1] + action[1]
 
             if self.is_slippery:
                 new_x += np.random.normal(0, 0.01)
                 new_y += np.random.normal(0, 0.01)
 
-            self.observations[i], self.rewards[i], agent_terminated, agent_truncated, log = self.reward_function(
+            self.observations[i]['observation'], _, agent_terminated, agent_truncated, log = self.reward_function(
                 np.array([new_x, new_y])
             )
+            
+            self.observations[i]['achieved_goal'] = self.observations[i]['observation']
 
-            self.trajectories[i].append(self.observations[i])
+            self.trajectories[i].append(observation)
             self.num_steps += 1
 
             if agent_terminated:
@@ -117,20 +128,25 @@ class MultiAgentContinuousUAV(ContinuousUAV):
             goal_text = self.font.render(str(goal_char), True, (0, 0, 0))
             text_rect = goal_text.get_rect(center=goal_rect.center)
             self.screen.blit(goal_text, text_rect)
-
+            
         # Draw the agents
         for i, observation in enumerate(self.observations):
+            
+            if type(observation) == dict:
+                observation = observation['observation']
+            
             x, y = self.frame2grid(observation)
-            agent_x = x * self._cell_size - self.agent_img.get_width() // 2
-            agent_y = y * self._cell_size - self.agent_img.get_height() // 2
+            agent_x = int(x * self._cell_size - self.agent_img.get_width() // 2)
+            agent_y = int(y * self._cell_size - self.agent_img.get_height() // 2)
+            
             self.screen.blit(self.agent_img, (agent_x, agent_y))
-
+            
             # Draw the trajectory
             if self.trajectories[i]:
                 for point in self.trajectories[i]:
                     traj_x, traj_y = self.frame2grid(point)
-                    traj_x = traj_x * self._cell_size
-                    traj_y = traj_y * self._cell_size
+                    traj_x = int(traj_x * self._cell_size)
+                    traj_y = int(traj_y * self._cell_size)
                     pygame.draw.circle(self.screen, (255, 0, 0), (traj_x, traj_y), 5)
 
         if not self.is_display:
@@ -155,25 +171,35 @@ class MultiAgentContinuousUAV(ContinuousUAV):
         """
         self.observations,_ = self.reset()
         self.render()
+        
+        print(agents)
+        print(self.observations)
+        
         if max_steps is None:
             max_steps = self._max_episode_steps
         for step in range(max_steps):
             with torch.no_grad():
-                actions = []
-                for i, agent in enumerate(agents):
-                    action, _ = agent.actor(
-                            torch.tensor(self.observations[i],dtype=torch.float32), deterministic=True, with_logprob=False
-                        )
-                    actions.append(action)
-            self.observations,  rewards,  terminated, truncated, _ = self.step(actions)
-                    # Debug prints
+                all_actions = []
+                for i, obs in enumerate(self.observations):
+                    if type(obs) == dict:
+                        obs_goal = obs
+                    else:
+                        obs_goal = torch.cat([torch.tensor(obs, dtype=torch.float32), torch.tensor(self.goal, dtype=torch.float32)])
+                        
+                    actions, _ = agents[i].predict(
+                        obs_goal, deterministic=True 
+                    )
+                    all_actions.append(actions)
+                    
+            self.observations,  rewards,  terminated, truncated, _ = self.step(all_actions)
+            
+            # Debug prints
             # print(f"Step: {step}")
             # print(f"Actions: {actions}")
             # print(f"Observations: {self.observations}")
             # print(f"Rewards: {rewards}")
             # print(f"Terminated: {terminated}")
             # print(f"Truncated: {truncated}")
-            
             
             self.render()
             if all(truncated.values()):

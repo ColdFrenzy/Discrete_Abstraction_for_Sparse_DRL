@@ -6,7 +6,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from collections import deque
 
 class WinRateCallback(BaseCallback):
-    def __init__(self, window_size=50, verbose=0):
+    def __init__(self, window_size=100, verbose=0):
         super().__init__(verbose)
         self.window_size = window_size  # La dimensione della finestra per il win_rate
         self.wins = deque(maxlen=window_size)  # La finestra degli ultimi episodi

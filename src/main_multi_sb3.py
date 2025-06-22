@@ -1,0 +1,142 @@
+import os
+from typing import List
+import numpy as np
+import torch
+from src.utils.paths import QTABLE_DIR
+from src.definitions import RewardType, TransitionMode
+from src.environments.maps import MAPS_FREE
+from src.environments.maps import MAPS_OBST
+from src.value_function_computation import compute_value_function
+from src.utils.heatmap import generate_heatmaps_numbers
+from stable_baselines3.common.env_checker import check_env
+from stable_baselines3 import HerReplayBuffer, DDPG, DQN, SAC, TD3
+from stable_baselines3.her.goal_selection_strategy import GoalSelectionStrategy
+from src.environments.single_agent.cont_uav_env_sb3 import ContinuousUAVSb3HerWrapper
+from src.utils.evaluation_metrics import WinRateCallback
+from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.base_class import BaseAlgorithm
+
+def get_agent_pos(idx: int) -> float:
+    """
+    idx goes from 0 to map_size (exclusive)
+    """
+    return ((idx + 1) + idx) * 0.5
+
+def main(alg="SAC", map_size=5, gamma = 0.1, seed=42):
+    model_class = SAC  # works also with SAC, DDPG and TD3
+    os.environ["IS_RENDER"] = "False"
+    if alg == "SAC_HR":
+        env_reward_type = RewardType.model
+    elif alg == "SAC_DENSE":
+        env_reward_type = RewardType.dense
+    else:
+        env_reward_type = RewardType.sparse
+
+    is_slippery = False
+    map_size = map_size
+    MAX_EPISODE_STEPS = 400
+    NUM_EPISODES_DISCRETE = 10_000
+    OBST = True
+    if OBST:
+        map_name = MAPS_OBST[map_size]
+    else:
+        map_name = MAPS_FREE[map_size]
+
+    if alg == "SAC_HR":
+        transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
+        compute_value_function(map_name, size=map_size, OBST=OBST, num_episodes=NUM_EPISODES_DISCRETE, gamma = 0.8, stochastic=is_slippery, save=True)
+        qtable = np.load(f"{QTABLE_DIR}/{transition_mode.name}/qtable_{map_size}_obstacles_{OBST}.npz")
+        generate_heatmaps_numbers(qtable, map_size, seed)
+        
+    custom_callback_1 = WinRateCallback() 
+    a1_initial_pos = [get_agent_pos(5), get_agent_pos(5)]
+    env1 = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = a1_initial_pos, reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
+    
+    custom_callback_3 = WinRateCallback() 
+    a3_initial_pos = [get_agent_pos(0), get_agent_pos(9)]
+    env3 = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a3", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = a3_initial_pos, reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
+    # Available strategies (cf paper): future, final, episode
+    
+    agents = ["a1", "a3"]
+    envs = [env1, env3]
+    models: List[BaseAlgorithm] = []
+    callbacks: List[BaseCallback] = [custom_callback_1, custom_callback_3]
+
+    # test if the environment follows the gym interface
+    # check_env(env)
+
+    goal_selection_strategy = "future" # equivalent to GoalSelectionStrategy.FUTURE
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Initialize the model
+    if alg == "SACHER":
+        for agent, env in zip(agents, envs):
+            models.append(model_class(
+                "MultiInputPolicy",
+                env,
+                replay_buffer_class=HerReplayBuffer, # Comment this line to use the default replay buffer
+                learning_starts=1e4,
+                # Parameters for HER
+                replay_buffer_kwargs=dict(
+                    n_sampled_goal=4,
+                    goal_selection_strategy=goal_selection_strategy,
+                ),
+                tensorboard_log=f"./tensorboards/her_sac_uav_tensorboard/{agent}/{map_size}x{map_size}_{seed}",
+                verbose=2,
+                device=device,
+            ))
+    elif alg == "SAC":
+        for agent, env in zip(agents, envs):
+            models.append(model_class(
+                "MultiInputPolicy",
+                env,
+                learning_starts=1e4,
+                tensorboard_log=f"./tensorboards/sac_uav_tensorboard/{agent}/{map_size}x{map_size}_{seed}",
+                verbose=2,
+                device=device,
+            ))
+    elif alg == "SAC_DENSE":
+        for agent, env in zip(agents, envs):
+            models.append(model_class(
+                "MultiInputPolicy",
+                env,
+                learning_starts=1e4,
+                tensorboard_log=f"./tensorboards/sac_dense_uav_tensorboard/{agent}/{map_size}x{map_size}_{seed}_{gamma}",
+                verbose=2,
+                device=device,
+                gamma=gamma,
+            ))
+    elif alg == "SAC_HR":
+        for agent, env in zip(agents, envs):
+            models.append(model_class(
+                "MultiInputPolicy",
+                env,
+                learning_starts=1e4,
+                tensorboard_log=f"./tensorboards/sac_hr_uav_tensorboard/{agent}/{map_size}x{map_size}_{seed}_{gamma}",
+                verbose=2,
+                device=device,
+                gamma=gamma,
+            ))
+
+    # Train the model
+    for agent, model, env, callback in zip(agents, models, envs, callbacks):
+        print(f"start learning for agent {agent}")
+        model.learn(100_000, callback=callback)
+        print(f"learning done for agent {agent}")
+        save_path = f"./models/{agent}/{alg}/{map_size}x{map_size}_{seed}_{gamma}"
+        model.save(save_path)
+        # Because it needs access to `env.compute_reward()`
+        # HER must be loaded with the env
+        model = model_class.load(save_path, env)
+
+if __name__ == "__main__":
+    algos = ["SAC_DENSE"]
+    maps = [10]
+    seeds = [13, 42, 69]
+    gammas = [0.1]
+
+    for alg in algos:
+        for map_size in maps:
+            for seed in seeds:
+                for gamma in gammas:
+                    print(f"Running {alg} on map size {map_size} with seed {seed} with gamma {gamma}")
+                    main(alg=alg, map_size=map_size, gamma= gamma, seed=seed)
