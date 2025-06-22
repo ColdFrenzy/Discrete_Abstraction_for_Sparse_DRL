@@ -3,6 +3,7 @@
 import functools
 import numpy as np
 from pettingzoo import ParallelEnv
+from src.definitions import RewardType
 from src.environments.maps import MAPS_FREE, MAPS_OBST, MAPS_FREE_BASESTATION, MAPS_OBST_BASESTATION
 
 class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
@@ -18,7 +19,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
                    },
         OBST: bool = True, # Obstacles
         BS: bool = True,    # Base station 
-        reward_type = 2, # dense = 0, sparse = 1, model = 2
+        reward_type = RewardType.model, # dense = 0, sparse = 1, model = 2
         max_episode_steps: int = 200,
         task: str = "encircle_target", # reach_target or encircle_target
         # for the desired orientation use the format [start_angle, end_angle]

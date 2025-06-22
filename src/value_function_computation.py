@@ -332,7 +332,7 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
 
     # Add agents to the environment
     a1 = AgentRL("a1", env)
-    a1.set_initial_position(0, 9)  # Aggiungo la pos anche allo stato dell'agente [0, 0]
+    a1.set_initial_position(0, size-1)  # Aggiungo la pos anche allo stato dell'agente [0, 0]
     a1.add_state_encoder(StateEncoderUAV(a1))
 
     a2 = AgentRL("a2", env)
@@ -400,7 +400,7 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
         epsilon_start=1.0,
         epsilon_end=0.2,
         epsilon_decay=0.99,
-        state_space_size=env.grid_width * env.grid_height * RM_1.numbers_state(),
+        state_space_size=env.grid_width * env.grid_height * RM_2.numbers_state(),
         action_space_size=4,
     )
     alg_3 = QLearning(
@@ -410,7 +410,7 @@ def compute_value_function_single(map_name, size, OBST, num_episodes = 10000, ga
         epsilon_start=1.0,
         epsilon_end=0.2,
         epsilon_decay=0.99,
-        state_space_size=env.grid_width * env.grid_height * RM_1.numbers_state(),
+        state_space_size=env.grid_width * env.grid_height * RM_3.numbers_state(),
         action_space_size=4,
     )
     a1.set_learning_algorithm(alg_1)

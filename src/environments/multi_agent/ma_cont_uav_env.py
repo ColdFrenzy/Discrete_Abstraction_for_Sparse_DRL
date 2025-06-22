@@ -130,7 +130,6 @@ class MultiAgentContinuousUAV(Env):
         self.terminations = {agent: False for agent in self.agents}
         self.truncations = {agent: False for agent in self.agents}
         self.switch_reward = {agent: False for agent in self.agents}  # when using reward_type == RewardType.model, this is used to switch the reward from the model to the real reward
-        
         # Rendering stuff
         self.is_pygame_initialized = False
         self.frames = []
@@ -404,12 +403,12 @@ class MultiAgentContinuousUAV(Env):
         # if we are using the model reward type, agents will receive the model reward reward up until they are close enough to the goal
         if self.reward_type == RewardType.model:
             for agent in self.agents:
-                self.compute_switch_reward(agent)
-                if self.switch_reward[agent]:
-                    continue
-                else:
-                    i, j = self.frame2matrix(self.observations[agent])
-                    reward += self.values[i, j] 
+                # self.compute_switch_reward(agent)
+                # if self.switch_reward[agent]:
+                #     continue
+                # else:
+                i, j = self.frame2matrix(self.observations[agent])
+                rewards[agent] = self.values[agent][i, j] / 150 # TODO: scale down the reward, let's see if this works
 
 
         for agent in agents_beta:
@@ -437,7 +436,7 @@ class MultiAgentContinuousUAV(Env):
                 theta = eta * (self.total_bandwidth / len(agents_beta))
                 # r1 is the rewards that balance spectral efficiency and distance from the goal 
                 r1 = rho*theta
-                rewards[agent] = float(r1) / 100 # TODO: manual scaling, implement a better scaling
+                rewards[agent] += float(r1) / 100 # TODO: manual scaling, implement a better scaling
 
             # check if the angular distance between the agents is enough
             angular_distance = True if len(agent_angle_from_goal) > 1 else False
@@ -450,7 +449,7 @@ class MultiAgentContinuousUAV(Env):
                         angular_distance = False
             if angular_distance:
                 for agent in agent_angle_from_goal:
-                    rewards[agent] += 1
+                    rewards[agent] += 5
 
             # else:
             #     if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
@@ -610,7 +609,7 @@ class MultiAgentContinuousUAV(Env):
         x, y = frame_pos
 
         # Flipping y axis
-        y = self.size - y
+        # y = self.size - y
 
         cell = np.array([x, y])
 
@@ -798,7 +797,7 @@ class MultiAgentContinuousUAV(Env):
         """
 
         distance_from_goal = np.linalg.norm(self.observations[agent] - self.goal)
-        if distance_from_goal < 2*self.desired_distances:
+        if distance_from_goal < self.desired_distances[agent][1]:
             self.switch_reward[agent] = True
 
 def check_uav_collision(pos1: np.ndarray, pos2: np.ndarray, r: float) -> bool:

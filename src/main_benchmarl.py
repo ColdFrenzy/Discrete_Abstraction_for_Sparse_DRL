@@ -102,4 +102,4 @@ def main(algos=["mappo", "mappo_hr"], seeds=[4,8,15,16,23,42], map_size=10, OBST
 
 
 if __name__ == "__main__":
-    main(algos=["mappo_hr"], seeds=[4], map_size=10, OBST=True)
+    main(algos=["mappo_hr"], seeds=[4,8,15], map_size=10, OBST=True)
