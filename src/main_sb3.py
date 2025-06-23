@@ -19,9 +19,11 @@ def main(alg="SAC", map_size=5, seed=13):
     os.environ["IS_RENDER"] = "False"
     if alg == "SAC_HR":
         env_reward_type = RewardType.model
+    if alg == "SACRELAX":
+        env_reward_type = RewardType.dense
     else:
         env_reward_type = RewardType.sparse # or model, or sparse
-
+    
 
     custom_callback = WinRateCallback()
     is_slippery = False
@@ -37,8 +39,8 @@ def main(alg="SAC", map_size=5, seed=13):
     if alg == "SAC_HR":
         transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
         compute_value_function_single(map_name, size=map_size, OBST=OBST, num_episodes=NUM_EPISODES_DISCRETE, gamma = 0.8, stochastic=is_slippery, save=True)
-        qtable = np.load(f"{QTABLE_DIR}/{transition_mode.name}/qtable_{map_size}_obstacles_{OBST}.npz")
-        generate_heatmaps_numbers(qtable, seed)
+        qtable = np.load(f"{QTABLE_DIR}/{transition_mode.name}/single_agent/qtable_{map_size}_obstacles_{OBST}.npz")
+        # generate_heatmaps_numbers(qtable, seed)
         
     env = ContinuousUAVSb3HerWrapper(map_name =  map_name, agent_name="a1", size = map_size, max_episode_steps=MAX_EPISODE_STEPS, OBST=OBST, agent_initial_pos = [0.5, map_size-0.5], reward_type = env_reward_type, is_rendered = True, is_slippery = is_slippery, is_display=False, seed=seed)
     # Available strategies (cf paper): future, final, episode
@@ -65,7 +67,7 @@ def main(alg="SAC", map_size=5, seed=13):
             verbose=2,
             device=device,
         )
-    elif alg == "SAC":
+    elif alg == "SAC" or alg == "SACRELAX":
         model = model_class(
             "MultiInputPolicy",
             env,
@@ -86,20 +88,20 @@ def main(alg="SAC", map_size=5, seed=13):
         )
 
     # # Train the model
-    # print("start learning")
-    # model.learn(100000, callback=custom_callback)
-    # print("learning done")
-    # save_path = f"./models/{alg}_{map_size}x{map_size}_{seed}"
-    # model.save(save_path)
+    print("start learning")
+    model.learn(100000, callback=custom_callback)
+    print("learning done")
+    save_path = f"./models/{alg}_{map_size}x{map_size}_{seed}"
+    model.save(save_path)
     # # Because it needs access to `env.compute_reward()`
     # # HER must be loaded with the env
     # model = model_class.load(save_path, env=env)
 
 
 if __name__ == "__main__":
-    algos = ["SAC_HR"]
-    maps = [10]
-    seeds = [13, 42, 69]
+    algos =  ["SACRELAX"] # [ "SAC", "SACHER", "SAC_HR",] #
+    maps = [7]
+    seeds = [8,15,16,23,42,78,113,245, 321] # 4
 
     for alg in algos:
         for map_size in maps:
