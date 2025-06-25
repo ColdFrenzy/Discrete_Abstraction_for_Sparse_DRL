@@ -67,12 +67,21 @@ def main(alg="SAC", map_size=5, seed=13):
             verbose=2,
             device=device,
         )
-    elif alg == "SAC" or alg == "SACRELAX":
+    elif alg == "SAC":
         model = model_class(
             "MultiInputPolicy",
             env,
             learning_starts=1e4,
             tensorboard_log=f"./sa_sac_uav_tensorboard/{map_size}x{map_size}_{seed}",
+            verbose=2,
+            device=device,
+        )
+    elif alg == "SACRELAX":
+        model = model_class(
+            "MultiInputPolicy",
+            env,
+            learning_starts=1e4,
+            tensorboard_log=f"./sa_sac_dense_uav_tensorboard/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
         )
@@ -99,10 +108,13 @@ def main(alg="SAC", map_size=5, seed=13):
 
 
 if __name__ == "__main__":
-    algos =  ["SACRELAX"] # [ "SAC", "SACHER", "SAC_HR",] #
+    algos =  ["SACHER", "SACRELAX"] # ["SAC", "SAC_HR"] 
     maps = [7]
-    seeds = [8,15,16,23,42,78,113,245, 321] # 4
+    seeds =  [4, 8547, 6875, 6617, 1070, 2027, 9643, 1092, 6935, 4223, 1858, 1705,
+       8641, 6909, 2614, 5503, 6449, 3447, 6910, 5446] # [8,15,16,23,42,78,113,245, 321]
 
+    # create 19 random numbers 
+    
     for alg in algos:
         for map_size in maps:
             for seed in seeds:
