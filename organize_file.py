@@ -2,7 +2,7 @@ import os
 import shutil
 
 # Define the root directory where all the 7x7_# directories are located
-root_dir = 'sa_sac_dense_uav_tensorboard' 
+root_dir = 'sa_sac_uav_tensorboard_gamma98' 
 
 # Define the new directory where we want to move the files
 new_dir = os.path.join(root_dir, '7x7')
