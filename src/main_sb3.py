@@ -71,9 +71,10 @@ def main(alg="SAC", map_size=5, seed=13):
         model = model_class(
             "MultiInputPolicy",
             env,
-            gamma=0.98, # default is 0.99, but we use 0.95 for UAV
+            gamma=0.97, # default is 0.99, but we use 0.95 for UAV
             learning_starts=1e4,
-            tensorboard_log=f"./sa_sac_uav_tensorboard_gamma98/{map_size}x{map_size}_{seed}",
+            # learning_rate= 1e-4, # default is 3e-4, but we use 1e-4 
+            tensorboard_log=f"./sa_sac_uav_tensorboard_gamma97/{map_size}x{map_size}_{seed}",
             verbose=2,
             device=device,
         )
