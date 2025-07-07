@@ -10,6 +10,7 @@ import os
 import numpy as np
 from src.utils.paths import ROOT_DIR
 from scipy.interpolate import interp1d
+from scipy.stats import ttest_ind, shapiro, mannwhitneyu
 from tensorboard.backend.event_processing import event_accumulator
 
 def save_reward_plots(reward_dict, save_path="reward_plots"):
@@ -142,13 +143,158 @@ def tensordboard_plot(tensorboard_path: str, save_path: str):
     # print(f"Aggregated data logged to: {aggregated_log_dir}")
 
 
+def statistical_significance(tensorboard_path: str, threshold: float = 0.5):
+
+    first_timestep =  {name: [] for name in tensorboard_path.keys()}
+    for algorithm_name, log_dir in tensorboard_path.items():
+        
+        run_dirs = [os.path.join(log_dir, run) for run in os.listdir(log_dir)]
+                
+        # Read the event files from each run directory
+        for run in run_dirs:
+            event_acc = event_accumulator.EventAccumulator(run)
+            event_acc.Reload()
+
+            # Extract step and reward values
+            steps = [event.step for event in event_acc.Scalars('custom/win_rate')]
+            reward_values = [event.value for event in event_acc.Scalars('custom/win_rate')]
+
+            consistent=False
+            temp = -1
+            # Find the first timestep from when the algorithm is always above the threshold
+            for step, rew in zip(steps, reward_values):
+                # Find the first timestep where the win rate is above the threshold
+                if rew >= threshold and temp == -1: 
+                    temp = step
+                elif rew < threshold:
+                    temp = -1
+            # If the algorithm never reaches the threshold, temp will remain -1            
+            first_timestep[algorithm_name].append(temp)
+
+    print(f"{algorithm_name} first timestep: {first_timestep[algorithm_name]}")
+
+    # access dictionary elements without knowing the keys
+    algo_1 = list(first_timestep.keys())[0]
+    algo_2 = list(first_timestep.keys())[1]
+    stat1, p1 = shapiro(first_timestep[algo_1])
+    stat2, p2 = shapiro(first_timestep[algo_2])
+
+    print(f"Algo A normality p-value: {p1:.4f}")
+    print(f"Algo B normality p-value: {p2:.4f}")
+
+    # show_histogram(first_timestep[algo_2], first_timestep[algo_1])
+    t_stat, p_value = ttest_ind(first_timestep[algo_1], first_timestep[algo_2], equal_var=False)
+
+    alpha = 0.05
+    if p_value < alpha:
+        print("✅ There is a statistically significant difference between the two algorithms. the p-value is {:.7f}".format(p_value))
+    else:
+        print("❌ No statistically significant difference was found.")
+
+    # suppose that both algorithms have no normal distribution, we can run non-parametric tests such as mann-whitney U test
+    u_stat, p_mw = mannwhitneyu(first_timestep[algo_1], first_timestep[algo_2], alternative='two-sided') # alternative can be also 'greater' or 'less' depending on the hypothesis
+    print(f"Mann–Whitney U test statistic: {u_stat}")
+    print(f"Mann–Whitney U test p-value: {p_mw:.6f}")
+
+    # bootstrap the difference of means
+    mean_diff, lower_ci, upper_ci = bootstrap_diff_means(first_timestep[algo_1], first_timestep[algo_2])
+    print(f"Bootstrap mean difference: {mean_diff:.3f}")
+    print(f"{95}% CI: [{lower_ci:.3f}, {upper_ci:.3f}]")
+
+    # compute cohen's d
+    d = cohen_d(first_timestep[algo_1], first_timestep[algo_2])
+    print(f"Cohen's d: {d:.4f}")
+
+    # compute how more sample efficient in terms of percentage is SAC_HR compared to SAC
+    mean_a = np.mean(first_timestep[algo_1])
+    mean_b = np.mean(first_timestep[algo_2])
+    # mean_b should be the faster algorithm (less timestep otherwise we get negative value), so we compute the percentage improvement of SAC_HR over SAC
+    percentage_improvement = ((mean_a - mean_b) / mean_a) * 100
+
+
+def bootstrap_diff_means(x, y, n_bootstrap=10000, ci=95):
+    """used to compute the confidence interval of the difference of means between two samples x and y
+    Args:
+        x (array-like): First sample.
+        y (array-like): Second sample.
+        n_bootstrap (int): Number of bootstrap samples to draw.
+        ci (float): Confidence interval percentage (default is 95).
+    Returns:
+        tuple: Mean difference, lower bound, and upper bound of the confidence interval.
+    
+    """
+    diffs = []
+    combined = np.concatenate([x, y])
+    nx, ny = len(x), len(y)
+
+    for _ in range(n_bootstrap):
+        sample_x = np.random.choice(x, size=nx, replace=True)
+        sample_y = np.random.choice(y, size=ny, replace=True)
+        diffs.append(np.mean(sample_x) - np.mean(sample_y))
+
+    lower = np.percentile(diffs, (100 - ci) / 2)
+    upper = np.percentile(diffs, 100 - (100 - ci) / 2)
+    mean_diff = np.mean(diffs)
+    return mean_diff, lower, upper
+
+
+def cohen_d(x, y):
+    nx = len(x)
+    ny = len(y)
+    dof = nx + ny - 2
+    pooled_std = np.sqrt(((nx - 1)*np.var(x, ddof=1) + (ny - 1)*np.var(y, ddof=1)) / dof)
+    d = (np.mean(x) - np.mean(y)) / pooled_std
+    return d
+
+def show_histogram(algo_a, algo_b):
+    plt.figure(figsize= (10, 6))
+
+    # Histogram
+    plt.hist(algo_a, bins=8, alpha=0.7, label='SAC_HR')
+    plt.hist(algo_b, bins=8, alpha=0.7, label='SAC')
+    plt.title('Histogram of Convergence Times')
+    plt.xlabel('Time to Converge')
+    plt.legend()
+
+    plt.show()
+
+def show_separate_histogram(algo_a, algo_b):
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+    axs[0].hist(algo_a, bins=8, alpha=0.7, color='steelblue')
+    axs[0].set_title('SAC with gamma 0.94 Convergence Times')
+
+    axs[1].hist(algo_b, bins=8, alpha=0.7, color='orange')
+    axs[1].set_title('SAC with gamma 0.95 Convergence Times')
+
+    for ax in axs:
+        ax.set_xlabel('Time to Converge')
+        ax.set_ylabel('Frequency')
+
+    plt.tight_layout()
+    plt.show()
+
+def show_boxplot(algo_a, algo_b):
+    plt.figure(figsize= (10, 6))
+
+    # Boxplot
+    plt.boxplot([algo_a, algo_b], labels=['SAC_HR', 'SAC'])
+    plt.title('Boxplot of Convergence Times')
+    plt.ylabel('Time to Converge')
 
 
 if __name__ == "__main__":
-    name = "10x10"
-    tb_paths = {"SAC": f"sa_sac_uav_tensorboard/{name}",
-               "SAC_HER": f"sa_her_sac_uav_tensorboard/{name}",
-               "SAC_HR": f"sa_sac_hr_uav_tensorboard/{name}",
-               "SAC_RELAX": f"sa_sac_dense_uav_tensorboard/{name}"}
+    name = "7x7"
+    tb_paths = {"SAC_gamma_99": f"sa_sac_uav_tensorboard/{name}",
+               # "SAC_HER": f"sa_her_sac_uav_tensorboard/{name}",
+               "SAC_gamma_98": f"sa_sac_uav_tensorboard_gamma98/{name}",
+               "SAC_gamma_95": f"sa_sac_uav_tensorboard_gamma95/{name}",
+               "SAC_gamma_97": f"sa_sac_uav_tensorboard_gamma97/{name}",
+               "SAC_gamma_94": f"sa_sac_uav_tensorboard_gamma94/{name}",
+               # "SAC_HR": f"sa_sac_hr_uav_tensorboard/{name}",
+               # "SAC_RELAX": f"sa_sac_dense_uav_tensorboard/{name}"
+               }
     img_plot = ROOT_DIR / "plots" / f"{name}_single_ep_len_mean_plot.png"
-    tensordboard_plot(tensorboard_path=tb_paths, save_path=img_plot)
+
+
+    elem = statistical_significance(tensorboard_path=tb_paths, threshold=0.9)
+    # tensordboard_plot(tensorboard_path=tb_paths, save_path=img_plot)

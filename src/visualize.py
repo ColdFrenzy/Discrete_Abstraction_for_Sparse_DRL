@@ -15,7 +15,7 @@ def get_agent_pos(idx: int) -> float:
     """
     return ((idx + 1) + idx) * 0.5
 
-def main(alg="SAC_HR", map_size=10, seed=42):
+def main(alg="SAC_HR", map_size=7, seed=42):
     model_class = SAC  # works also with SAC, DDPG and TD3
     os.environ["IS_RENDER"] = "True"
     if alg == "SAC_HR":
