@@ -148,6 +148,7 @@ class MultiAgentContinuousUAV(Env):
         actions: dict[str, list[float, float]]: Actions for each agent.
         actions are [dx, dy] where positive dx is right and positive dy is up.
         """
+        self.update_stats()
         new_pos = {agent: np.zeros((2,), dtype=np.float32) for agent in self.agents}
         # iterate over the agents
         new_observations = {}
@@ -223,6 +224,19 @@ class MultiAgentContinuousUAV(Env):
 
         #     self.observations[agent] = np.array([x, y])
         #     agents_position.append((x, y))
+        # stats to collect during episode
+        self.stats = {agent_name: {
+            "Throughput": [],
+            "Angular_Distance": [],
+            "Euclidean_Distance": [],
+            # "Speed": [],
+            # "Angular_Speed": [],
+            # "Euclidean_Speed": [],
+            # "Angular_Acceleration": [],
+            # "Euclidean_Acceleration": []
+        }
+        for agent_name in self.agents
+        }
         self.frames = []
         return deepcopy(self.observations), {}
     
@@ -774,6 +788,7 @@ class MultiAgentContinuousUAV(Env):
         goal_pos = self.goal
         angle_from_goal = np.arctan2(goal_pos[1] - uav_pos[1], goal_pos[0] - uav_pos[0])
         angle_from_goal = (np.degrees(angle_from_goal) + 360) % 360
+        return angle_from_goal
     
     # function parameter decorator
     @property
@@ -785,6 +800,20 @@ class MultiAgentContinuousUAV(Env):
                 beta.append(agent)
         return beta
     
+    @property
+    def within_bs_radius(self) -> dict[str, bool]:
+        """
+        Check if the agents are within the base station radius.
+
+        Returns:
+            dict[str, bool]: A dictionary with agent names as keys and boolean values indicating if they are within the base station radius.
+        """
+        within_radius = {}
+        for agent in self.agents:
+            distance_from_bs = np.linalg.norm(self.observations[agent] - self.base_stations[0])
+            within_radius[agent] = distance_from_bs <= self.bs_radius
+        return within_radius
+
     def compute_switch_reward(self, agent: str) -> float:
         """
         Compute the distance from the goal for a given agent.
@@ -799,6 +828,27 @@ class MultiAgentContinuousUAV(Env):
         distance_from_goal = np.linalg.norm(self.observations[agent] - self.goal)
         if distance_from_goal < self.desired_distances[agent][1]:
             self.switch_reward[agent] = True
+
+    def update_stats(self):
+        """
+        Compute statistics for the current step.
+        Returns:
+            dict: A dictionary containing the statistics.
+        """
+        agents_within_bs_radius = [agent for agent, within in self.within_bs_radius.items() if within]
+        for agent in self.agents:
+            # Throughput
+            eta = self.compute_spectral_efficiency(np.linalg.norm(self.observations[agent] - self.base_stations[0]) / self.bs_radius)
+            self.stats[agent]["Throughput"].append(float(eta * (self.total_bandwidth / len(agents_within_bs_radius))))
+            # Angular distance
+            angle_from_goal = float(self.compute_angular_relevance(self.observations[agent]))
+            self.stats[agent]["Angular_Distance"].append(angle_from_goal)
+            # Euclidean distance
+            euclidean_distance = float(np.linalg.norm(self.observations[agent] - self.goal))
+            self.stats[agent]["Euclidean_Distance"].append(euclidean_distance)
+            # Speed
+            
+            
 
 def check_uav_collision(pos1: np.ndarray, pos2: np.ndarray, r: float) -> bool:
     """
