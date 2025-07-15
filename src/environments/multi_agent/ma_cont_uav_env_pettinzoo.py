@@ -24,14 +24,14 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
         task: str = "encircle_target", # reach_target or encircle_target
         # for the desired orientation use the format [start_angle, end_angle]
         desired_orientations: dict[str, list[float,float]] = {"a1": [44.,46.], "a2": [134.,136.], "a3": [269., 271.]}, # None,
-        desired_distances: dict[str, list[float,float]] = {"a1": [0.8, 1.2], "a2": [0.8, 1.2], "a3": [0.8, 1.2]}, # None,
+        desired_distances: dict[str, list[float,float]] = {"a1": [5, 15], "a2": [5, 15], "a3": [5, 15]}, # distance from the target in meters
         optimal_view = 180., # east
-        total_bandwidth = 2, # in MHz
-        bs_radius = 8, 
+        total_bandwidth = 10, # in MHz
+        bs_radius = 80, # in meters
         is_slippery: bool = False,
         is_rendered: bool = True,
         is_display: bool = False,
-        collision_radius: float = 0.5,
+        collision_radius: float = 5, # in meters
         render_mode: str = "rgb_array",
 
         ):
@@ -74,8 +74,18 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
         # counter for the terminated steps of each agent (give reward only when agent is terminated for the first time)
 
     def observation_space(self, agent):
+        """Observation space includes:
+        - One-hot encoding of the agent ID
+        - Normalized position of the agent in the environment (x, y)
+        - Normalized velocity of the agent in the environment (vx, vy)
+        - Normalized goal position in the environment (gx, gy)
+        """
         return self.env.observation_space
     def action_space(self, agent):
+        """
+        Action space includes:
+        - Normalized linear accelleration (ax, ay)
+        """
         return self.env.action_space
 
     def reset(self, seed=None, options=None):
@@ -90,7 +100,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
             one_hot_encoding = [0 for _ in range(len(self.possible_agents))]
             one_hot_encoding[self.agent_name_mapping[agent]] = 1.
             one_hot_encoding = np.array(one_hot_encoding)
-            new_observations[agent] = np.concat((one_hot_encoding, (observations[agent] / self.env.size), (self.env.goal/self.env.size)))
+            new_observations[agent] = np.concat((one_hot_encoding, observations[agent], (self.env.goal/self.env.size)))
         return new_observations, infos
 
     def step(self, actions):
@@ -103,7 +113,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
             one_hot_encoding = [0 for _ in range(len(self.possible_agents))]
             one_hot_encoding[self.agent_name_mapping[agent]] = 1.
             one_hot_encoding = np.array(one_hot_encoding)
-            new_observations[agent] = np.concat((one_hot_encoding, (observations[agent] / self.env.size), (self.env.goal/self.env.size))) if observations[agent][0] >= 0 else np.concat((one_hot_encoding, observations[agent] , (self.env.goal/self.env.size)))
+            new_observations[agent] = np.concat((one_hot_encoding, observations[agent], (self.env.goal/self.env.size))) if observations[agent][0] >= 0 else np.concat((one_hot_encoding, observations[agent] , (self.env.goal/self.env.size)))
 
             if "GOAL REACHED" in infos[agent]:
                 new_infos[agent]["GOAL REACHED"] = infos[agent]["GOAL REACHED"]

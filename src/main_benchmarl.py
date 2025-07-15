@@ -14,35 +14,44 @@ from BenchMARL.benchmarl.environments import VmasTask
 from BenchMARL.benchmarl.experiment import Experiment, ExperimentConfig
 from BenchMARL.benchmarl.models.mlp import MlpConfig
 from BenchMARL.benchmarl.models.lstm import LstmConfig
+from src.environments.multi_agent.ma_cont_uav_env import check_initial_position
+from src.utils.utils import parse_map_emoji
 from src.utils.paths import CONFIG_DIR
 from src.definitions import RewardType, TransitionMode
 from src.value_function_computation import compute_value_function_single
 from src.utils.heatmap import generate_heatmaps_numbers
 from src.utils.paths import QTABLE_DIR
-from src.environments.maps import MAPS_FREE
-from src.environments.maps import MAPS_OBST
+from src.environments.maps import MAPS_FREE, MAPS_FREE_BASESTATION, MAPS_OBST_BASESTATION, MAPS_OBST
 # TODO: add to requirements pip install moviepy==1.0.3 , pip install benchmarl, pip install wandb[media]
 TEST_CONFIG = False
 USE_LSTM = False
 USE_ALGO = "mappo"
 
 
-def main(algos=["mappo", "mappo_hr"], seeds=[4,8,15,16,23,42], map_size=10, OBST=True):
+def main(algos=["mappo", "mappo_hr"], seeds=[4,8,15,16,23,42], map_size=10, OBST=True, bs = True, training = True, compute_qtable=True):
 
     for algo in algos:
         for seed in seeds:
             map_size = int(map_size)
-            training = True
-            compute_qtable = False
+            training = training
+            compute_qtable = compute_qtable
             is_slippery = False
+            BS = bs  # Base Station
             transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
             # root = project_root()
             NUM_EPISODES_DISCRETE = 40000
             OBST = OBST
             if OBST:
-                map_name = MAPS_OBST[map_size]
+                map_name = MAPS_OBST[map_size] if not BS else MAPS_OBST_BASESTATION[map_size]
             else:
-                map_name = MAPS_FREE[map_size]
+                map_name = MAPS_FREE[map_size] if not BS else MAPS_FREE_BASESTATION[map_size]
+            if BS:
+                holes, goals, base_stations = parse_map_emoji(map_name)
+            else:
+                holes, goals = parse_map_emoji(map_name)
+            goal = np.array(list(goals.values())[0]) + np.array([0.5, 0.5]) 
+            
+            
             if algo == "mappo":
                 env_reward_type = RewardType.sparse 
             elif algo == "mappo_hr":
