@@ -16,6 +16,8 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
         agents_pos: dict[str, list[float,float]] = {"a1":  [0.5, 9.5], # [0.5, 0.5],
                    "a2":  [9.5, 0.5], # [1.5, 0.5],
                    "a3":  [0.5, 0.5], # [2.5, 0.5], 
+                   "a4":  [9.5, 9.5],
+                   "a5":  [0.5, 5.5],
                    },
         OBST: bool = True, # Obstacles
         BS: bool = True,    # Base station 
@@ -24,14 +26,15 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
         task: str = "encircle_target", # reach_target or encircle_target
         # for the desired orientation use the format [start_angle, end_angle]
         desired_orientations: dict[str, list[float,float]] = {"a1": [44.,46.], "a2": [134.,136.], "a3": [269., 271.]}, # None,
-        desired_distances: dict[str, list[float,float]] = {"a1": [5, 15], "a2": [5, 15], "a3": [5, 15]}, # distance from the target in meters
+        desired_distances: dict[str, list[float,float]] = {"a1": [5, 15], "a2": [5, 15], "a3": [5, 15], "a4": [5, 15], "a5": [5, 15]}, # distance from the target in meters
         optimal_view = 180., # east
-        total_bandwidth = 10, # in MHz
-        bs_radius = 80, # in meters
+        bs_radius = 400, # in meters
         is_slippery: bool = False,
         is_rendered: bool = True,
         is_display: bool = False,
         collision_radius: float = 5, # in meters
+        total_bandwidth = 20, # in MHz
+        cell_size_meter: float = 50, # cell size in meters
         render_mode: str = "rgb_array",
 
         ):
@@ -59,6 +62,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
             collision_radius=collision_radius,
             bs_radius = bs_radius,
             total_bandwidth = total_bandwidth,
+            cell_size_meter = cell_size_meter,
         )
         self.possible_agents = self.env.agents
         # mapping between agent name and ID

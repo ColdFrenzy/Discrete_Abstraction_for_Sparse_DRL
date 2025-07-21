@@ -11,7 +11,7 @@ from copy import deepcopy
 from pygame.image import load
 from pygame.transform import scale
 from gymnasium.spaces import Box
-
+from shapely.geometry import LineString, Polygon
 
 from src.utils.paths import IMAGE_DIR, EPISODES_DIR
 from src.definitions import RewardType, TransitionMode
@@ -43,6 +43,7 @@ class MultiAgentContinuousUAV(Env):
         collision_radius: float = 5, # collision radius for the agents in meters
         bs_radius: float = 30, # radius of the base station in meters
         total_bandwidth: float = 10, # total bandwidth in MHz
+        cell_size_meter: float = 100, # cell size in meters
     ):
         """
         Initialize the MultiAgentContinuousUAV environment.
@@ -63,6 +64,7 @@ class MultiAgentContinuousUAV(Env):
             collision_radius (float): Collision radius for the agents.
             bs_radius (float): Base station radius for communication.
             total_bandwidth (float): Total bandwidth for the environment.
+            cell_size_meter (float): Size of each cell in meters.
 
         The grid has the following coordinates:
         (0,0)------------------(1,0)------------------(N,0)
@@ -70,7 +72,7 @@ class MultiAgentContinuousUAV(Env):
         |                                                  |
         (0,N)------------------(1,N)------------------(N,N)
         """
-        # General env parameters
+        # GENERAL ENV PARAMS
         self.map = map
         self.OBST = OBST    # if there is any obstacles
         self.BS = BS        # if there is any Base Station
@@ -79,13 +81,14 @@ class MultiAgentContinuousUAV(Env):
         self.transition_mode = TransitionMode.stochastic if is_slippery else TransitionMode.deterministic
         self.task = task
         self.rng = None
+        # REWARDS 
         self.goal_rew = 100.
         self.agent_collision = False
         self.agent_collision_rew = 0    # -1.
         self.wall_rew = 0
         self.hole_rew = 0
 
-        # Grid Topology
+        # GRID TOPOLOGY
         if self.BS:
             self.holes, self.goals, self.base_stations = parse_map_emoji(self.map)
             self.base_stations = [self.frame2center(np.array(bs, dtype=np.float32)) for bs in self.base_stations]
@@ -96,15 +99,15 @@ class MultiAgentContinuousUAV(Env):
         self.grid_height = self.size # number of rows
         self.grid_width = self.size # number of columns
         self._cell_size = 100 # cell size in pixels for rendering
-        self.cell_size_meter = 10 # cell size in meters
+        self.cell_size_meter = cell_size_meter # cell size in meters
 
-        # UAV parameters
+        # UAVs PARAMETERS
         self.max_velocity = 15. / self.cell_size_meter  # m/s
         self.max_acceleration = 5. / self.cell_size_meter  # m/s^2
         self.collision_radius = collision_radius / self.cell_size_meter  # meters
         self.bs_radius = bs_radius / self.cell_size_meter  # meters
 
-        # Environment parameters
+        # OTHER ENV PARAMS
         self.goal = self.frame2center(np.array(list(self.goals.values())[0]))
         # observations are [agent_ID (n_agents), x_t, y_t, vx_t, vy_t, goal_x, goal_y]
         self.observation_space = Box(low=-1, high=self.grid_width, shape=(6 + len(agents_pos),))
@@ -119,7 +122,7 @@ class MultiAgentContinuousUAV(Env):
         # Reward related stuff
         self._max_episode_steps = max_episode_steps
 
-        # agents related stuff
+        # CHECK IF INITIAL POSITIONS ARE VALID
         for agent in agents_pos:
             if type(agents_pos[agent]) != np.array:
                 agents_pos[agent] = np.array(agents_pos[agent])
@@ -136,7 +139,6 @@ class MultiAgentContinuousUAV(Env):
         self.trajectories = {agent: [] for agent in self.agents}
         self.terminations = {agent: False for agent in self.agents}
         self.truncations = {agent: False for agent in self.agents}
-        self.switch_reward = {agent: False for agent in self.agents}  # when using reward_type == RewardType.model, this is used to switch the reward from the model to the real reward
         # Rendering stuff
         self.is_pygame_initialized = False
         self.frames = []
@@ -145,9 +147,10 @@ class MultiAgentContinuousUAV(Env):
         if self.is_rendered:
             self.init_render()
         
-        # Load Q-table
+        # LOAD Q-TABLES
         if self.reward_type == RewardType.model:
             self.values = self.load_values()
+            self.value_scaler = 150 
 
     def step(self, actions: dict[str, list[float, float]]) -> Tuple[list, dict, dict, dict, dict]:
         """
@@ -162,6 +165,7 @@ class MultiAgentContinuousUAV(Env):
         # reset rewards
         self.rewards = {agent: 0 for agent in self.agents}
         for agent, action in actions.items():
+            # no termination in encircle target
             if self.terminations[agent]:
                 # absorbing state for terminated agents
                 new_observations[agent] = np.array([-1.0, -1.0], dtype=np.float32)
@@ -175,6 +179,7 @@ class MultiAgentContinuousUAV(Env):
 
             new_velocity = self.previous_velocities[agent] + action
             self.previous_velocities[agent] = np.clip(new_velocity, -self.max_velocity, self.max_velocity)  # clip the velocity to the max velocity
+            
             # update the agent's position
             new_pos[agent][0] = self.observations[agent][0] + new_velocity[0]
             new_pos[agent][1] = self.observations[agent][1] + new_velocity[1]
@@ -222,7 +227,6 @@ class MultiAgentContinuousUAV(Env):
         self.rewards = {agent: 0 for agent in self.agents}
         self.trajectories = {agent: [] for agent in self.agents}
         self.observations = deepcopy(self.agents_initial_pos)
-        self.switch_reward = {agent: False for agent in self.agents}
         # Reset the agents' positions. Uncomment the following for random positions
         # agents_position = []
         # self.observations = {}
@@ -239,8 +243,14 @@ class MultiAgentContinuousUAV(Env):
         # stats to collect during episode
         self.stats = {agent_name: {
             "Throughput": [],
-            "Angular_Distance": [],
-            "Euclidean_Distance": [],
+            "Angular_Distance_from_target": [],
+            "Euclidean_Distance_from_target": [],
+            "Upstream_Throughput": [],
+            "Beta": [],
+            "Rho": [],
+            "Acceleration": [],
+            "Speed": [],
+            "Position": [],
             # "Speed": [],
             # "Angular_Speed": [],
             # "Euclidean_Speed": [],
@@ -250,7 +260,7 @@ class MultiAgentContinuousUAV(Env):
         for agent_name in self.agents
         }
         self.frames = []
-        return deepcopy({agent: (self.observations[agent]/self.size) for agent in self.agents_initial_pos}), {}
+        return deepcopy({agent: np.concat(((self.observations[agent]/self.size), self.previous_velocities[agent])) for agent in self.agents_initial_pos}), {}
     
     def render(self, mode="human"):
         """
@@ -416,12 +426,8 @@ class MultiAgentContinuousUAV(Env):
         # if we are using the model reward type, agents will receive the model reward reward up until they are close enough to the goal
         if self.reward_type == RewardType.model:
             for agent in self.agents:
-                # self.compute_switch_reward(agent)
-                # if self.switch_reward[agent]:
-                #     continue
-                # else:
                 i, j = self.frame2matrix(self.observations[agent])
-                rewards[agent] = self.values[agent][i, j] / 150 # TODO: scale down the reward, let's see if this works
+                rewards[agent] = self.values[agent][i, j] / self.value_scaler 
 
 
         for agent in agents_beta:
@@ -496,10 +502,15 @@ class MultiAgentContinuousUAV(Env):
                 log[agent]["WALL"] = True
             # check for collisions with holes
             for hole in self.holes:
-                if is_inside_cell(new_pos[agent], hole):
+                # check if the line between the agent current position and new position
+                # intersects with the four segments constituting the hole
+                hole_boundary = self.compute_hole_boundaries(hole)
+                if check_collision_on_path(self.observations[agent], new_pos[agent], hole_boundary):
                     update_agent[agent] = False
                     rewards[agent] += self.hole_rew
-                    log[agent]["HOLE"] = True                   
+                    log[agent]["HOLE"] = True   
+                # if is_inside_cell(new_pos[agent], hole):
+                
             if self.agent_collision:
                 # check for collisions with other agents if the agent is active
                 for agent_num2, agent2 in enumerate(new_pos):
@@ -519,7 +530,9 @@ class MultiAgentContinuousUAV(Env):
             if update_agent[agent]:
                 self.observations[agent] = new_pos[agent]
                 self.trajectories[agent].append(self.observations[agent])
-
+            else:
+                # if the agent hits an obstacle, we reset the velocity to zero
+                self.previous_velocities[agent] = np.zeros((2,), dtype=np.float32)
         return rewards, log
 
     def init_render(self):
@@ -543,8 +556,11 @@ class MultiAgentContinuousUAV(Env):
         self.font = pygame.font.SysFont("Arial", 25)  # Crea un oggetto font
 
         agent_img_path = IMAGE_DIR / "drone.png"
+        # agent size should always be 1 meter in the environment, so we scale it accordingly
+        agent_size = 1 # 1 meter
+        agent_size = agent_size * self._cell_size / self.cell_size_meter
         self.agent_img = scale(
-            load(agent_img_path), (self._cell_size, self._cell_size)
+            load(agent_img_path), (agent_size, agent_size)
         )
         ice_img_path = IMAGE_DIR / "white.png"
         self.ice_img = scale(
@@ -577,9 +593,23 @@ class MultiAgentContinuousUAV(Env):
         """
         Load the Q-tables from the file system.
         """
-        qtables = np.load(f"{QTABLE_DIR}/{self.transition_mode.name}/single_agent/qtable_{self.size}_obstacles_{self.OBST}.npz")
+        qtables = np.load(f"{QTABLE_DIR}/{self.transition_mode.name}/single_agent/qtable_{self.size}_obstacles_{self.OBST}_{len(self.agents_initial_pos)}_agents.npz")
         return qtables
     
+    def compute_hole_boundaries(self, cell) -> list:
+        """
+        Compute the boundary of a cell in the grid.
+        The cell is defined as a tuple (x, y) where x is the column and y is the row.
+        The boundary is a list of points representing the corners of the cell.
+        """
+        x, y = cell
+        return [
+            (x, y),
+            (x + 1, y),
+            (x + 1, y + 1),
+            (x, y + 1),
+            (x, y)
+        ]
 
     def frame2matrix(self, frame_pos: np.ndarray) -> np.ndarray:
         """
@@ -797,21 +827,6 @@ class MultiAgentContinuousUAV(Env):
             within_radius[agent] = distance_from_bs <= self.bs_radius
         return within_radius
 
-    def compute_switch_reward(self, agent: str) -> float:
-        """
-        Compute the distance from the goal for a given agent.
-
-        Args:
-            agent (str): The agent's identifier.
-
-        Returns:
-            float: The distance from the goal.
-        """
-
-        distance_from_goal = np.linalg.norm(self.observations[agent] - self.goal)
-        if distance_from_goal < self.desired_distances[agent][1]:
-            self.switch_reward[agent] = True
-
     def update_stats(self):
         """
         Compute statistics for the current step.
@@ -828,10 +843,17 @@ class MultiAgentContinuousUAV(Env):
                 self.stats[agent]["Throughput"].append(float(eta * (self.total_bandwidth / len(agents_within_bs_radius))))
             # Angular distance
             angle_from_goal = float(self.compute_angular_relevance(self.observations[agent]))
-            self.stats[agent]["Angular_Distance"].append(angle_from_goal)
+            self.stats[agent]["Angular_Distance_from_target"].append(angle_from_goal)
             # Euclidean distance
             euclidean_distance = float(np.linalg.norm(self.observations[agent] - self.goal))
-            self.stats[agent]["Euclidean_Distance"].append(euclidean_distance)
+            self.stats[agent]["Euclidean_Distance_from_target"].append(euclidean_distance)
+            self.stats[agent]["Upstream_Throughput"].append(0)
+            self.stats[agent]["Beta"].append(0)
+            self.stats[agent]["Rho"].append(0)
+            self.stats[agent]["Acceleration"].append(0)
+            self.stats[agent]["Speed"].append(0)
+            self.stats[agent]["Position"].append(0)
+            # self.stats[agent][f"Angular_Distance_From_{}"]
             # Speed
             
             
@@ -910,6 +932,24 @@ def get_initial_pos(num_agents: int, grid_width: int, grid_height: int, holes: l
             valid_position = check_initial_position(x, y, agents_position, holes, goal)
 
         agents_position.append((x, y))
+
+def check_collision_on_path(start_pos, end_pos, obstacle):
+    """
+    Check if the line segment between start_pos and end_pos intersects with the obstacle.
+    :param start_pos: Starting position of the UAV as a tuple (x, y).
+    :param end_pos: Ending position of the UAV as a tuple (x, y).
+    :param obstacle: Obstacle defined as a list of points representing its corners.
+    :return: True if the path intersects with the obstacle, False otherwise.
+    """
+    # Create the line segment representing the UAV's movement path
+    path = LineString([start_pos, end_pos])
+    
+    # Create the obstacle as a Polygon (assuming the obstacle is a square)
+    # Define the square's corners (assuming obstacle's bottom-left corner at (x, y) and size 'size')
+    obstacle_polygon = Polygon(obstacle)
+    
+    # Check for intersection between the path and the obstacle
+    return path.intersects(obstacle_polygon)
 
 if __name__ == "__main__":
     from src.environments.maps import MAPS_FREE

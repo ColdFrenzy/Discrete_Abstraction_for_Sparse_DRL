@@ -276,7 +276,7 @@ def compute_value_function_single(map_name, size, OBST, agents, num_episodes = 1
         epsilon_start=1.0,
         epsilon_end=0.2,
         epsilon_decay=0.99,
-        state_space_size=env.grid_width * env.grid_height, # add * reward machine
+        state_space_size=env.grid_width * env.grid_height * a.reward_machine.numbers_state(), # add * reward machine
         action_space_size=4,
         )
         a.set_learning_algorithm(alg_i)
@@ -311,7 +311,7 @@ def compute_value_function_single(map_name, size, OBST, agents, num_episodes = 1
     
         transition_mode = "stochastic" if stochastic else "deterministic" 
         os.makedirs(f"{QTABLE_DIR}/{transition_mode}/single_agent", exist_ok=True)
-        np.savez_compressed(f"{QTABLE_DIR}/{transition_mode}/single_agent/qtable_{size}_obstacles_{OBST}.npz", **qtable)
+        np.savez_compressed(f"{QTABLE_DIR}/{transition_mode}/single_agent/qtable_{size}_obstacles_{OBST}_{len(agents)}_agents.npz", **qtable)
 
 
 def compute_value_function(map_name, size, OBST, num_episodes = 10000, gamma: float = 0.8, stochastic: bool = False, save: bool = True, show: bool = True) -> None:

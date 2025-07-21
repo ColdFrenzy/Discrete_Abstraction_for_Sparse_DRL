@@ -12,4 +12,5 @@ matplotlib~=3.9.4
 seaborn~=0.13.2
 stable-baselines3~=2.5.0
 moviepy==1.0.3 
+shapely==2.0.7
 wandb[media]

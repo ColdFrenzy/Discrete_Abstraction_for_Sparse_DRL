@@ -42,14 +42,14 @@ def main(algos=["mappo", "mappo_hr"], seeds=[4,8,15,16,23,42], map_size=10, OBST
             NUM_EPISODES_DISCRETE = 40000
             OBST = OBST
             if OBST:
-                map_name = MAPS_OBST[map_size] if not BS else MAPS_OBST_BASESTATION[map_size]
+                map_name = MAPS_OBST[map_size]# if not BS else MAPS_OBST_BASESTATION[map_size]
             else:
-                map_name = MAPS_FREE[map_size] if not BS else MAPS_FREE_BASESTATION[map_size]
-            if BS:
-                holes, goals, base_stations = parse_map_emoji(map_name)
-            else:
-                holes, goals = parse_map_emoji(map_name)
-            goal = np.array(list(goals.values())[0]) + np.array([0.5, 0.5]) 
+                map_name = MAPS_FREE[map_size]# if not BS else MAPS_FREE_BASESTATION[map_size]
+            # if BS:
+            #     holes, goals, base_stations = parse_map_emoji(map_name)
+            # else:
+            #     holes, goals = parse_map_emoji(map_name)
+            # goal = np.array(list(goals.values())[0]) + np.array([0.5, 0.5]) 
             
             
             if algo == "mappo":
@@ -58,12 +58,18 @@ def main(algos=["mappo", "mappo_hr"], seeds=[4,8,15,16,23,42], map_size=10, OBST
                 env_reward_type = RewardType.model
             else:
                 raise ValueError(f"Algorithm {algo} not supported")
-        
+
+            agents_pos = {"a1":  [0, 9], # [0.5, 0.5],
+                    "a2":  [9, 0], # [1.5, 0.5],
+                    "a3":  [0, 0], # [2.5, 0.5], 
+                    "a4":  [9, 9],
+                    "a5":  [0, 5],
+                   }
             if compute_qtable:
-                compute_value_function_single(map_name, size=map_size, OBST=OBST, num_episodes=NUM_EPISODES_DISCRETE, gamma = 0.8, stochastic=is_slippery, save=True)
+                compute_value_function_single(map_name, size=map_size, OBST=OBST, agents=agents_pos, num_episodes=NUM_EPISODES_DISCRETE, gamma = 0.8, stochastic=is_slippery, save=True)
                 
             if env_reward_type == RewardType.model:
-                qtable = np.load(f"{QTABLE_DIR}/{transition_mode.name}/single_agent/qtable_{map_size}_obstacles_{OBST}.npz")
+                qtable = np.load(f"{QTABLE_DIR}/{transition_mode.name}/single_agent/qtable_{map_size}_obstacles_{OBST}_{len(agents_pos)}_agents.npz")
                 # generate_heatmaps_numbers(qtable)
 
             if training:
@@ -111,4 +117,4 @@ def main(algos=["mappo", "mappo_hr"], seeds=[4,8,15,16,23,42], map_size=10, OBST
 
 
 if __name__ == "__main__":
-    main(algos=["mappo_hr"], seeds=[4,8,15], map_size=10, OBST=True)
+    main(algos=["mappo_hr"], seeds=[4], map_size=10, OBST=True, bs = True, training = True, compute_qtable=False)
