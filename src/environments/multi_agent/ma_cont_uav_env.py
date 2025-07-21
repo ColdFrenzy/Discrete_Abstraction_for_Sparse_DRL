@@ -158,7 +158,7 @@ class MultiAgentContinuousUAV(Env):
         actions: dict[str, list[float, float]]: Actions for each agent.
         actions are [dx, dy] where positive dx is right and positive dy is up.
         """
-        self.update_stats()
+        self.update_stats(actions)
         new_pos = {agent: np.zeros((2,), dtype=np.float32) for agent in self.agents}
         # iterate over the agents
         new_observations = {}
@@ -251,6 +251,8 @@ class MultiAgentContinuousUAV(Env):
             "Acceleration": [],
             "Speed": [],
             "Position": [],
+            "Heuristic": [],
+
             # "Speed": [],
             # "Angular_Speed": [],
             # "Euclidean_Speed": [],
@@ -259,6 +261,12 @@ class MultiAgentContinuousUAV(Env):
         }
         for agent_name in self.agents
         }
+        for i, agent in enumerate(self.agents):
+            for j, agent2 in enumerate(self.agents):
+                if j <= i:
+                    continue
+                self.stats[agent][f"Angular_Distance_from_{agent2}"] = []
+        
         self.frames = []
         return deepcopy({agent: np.concat(((self.observations[agent]/self.size), self.previous_velocities[agent])) for agent in self.agents_initial_pos}), {}
     
@@ -827,14 +835,15 @@ class MultiAgentContinuousUAV(Env):
             within_radius[agent] = distance_from_bs <= self.bs_radius
         return within_radius
 
-    def update_stats(self):
+    def update_stats(self, actions: dict[str, np.ndarray]) -> None:
         """
         Compute statistics for the current step.
         Returns:
             dict: A dictionary containing the statistics.
         """
         agents_within_bs_radius = [agent for agent, within in self.within_bs_radius.items() if within]
-        for agent in self.agents:
+        agents_beta = self.compute_agents_beta
+        for i, agent in enumerate(self.agents):
             # Throughput
             eta = self.compute_spectral_efficiency(np.linalg.norm(self.observations[agent] - self.base_stations[0]) / self.bs_radius)
             if not agents_within_bs_radius:
@@ -847,14 +856,34 @@ class MultiAgentContinuousUAV(Env):
             # Euclidean distance
             euclidean_distance = float(np.linalg.norm(self.observations[agent] - self.goal))
             self.stats[agent]["Euclidean_Distance_from_target"].append(euclidean_distance)
-            self.stats[agent]["Upstream_Throughput"].append(0)
-            self.stats[agent]["Beta"].append(0)
-            self.stats[agent]["Rho"].append(0)
-            self.stats[agent]["Acceleration"].append(0)
-            self.stats[agent]["Speed"].append(0)
-            self.stats[agent]["Position"].append(0)
-            # self.stats[agent][f"Angular_Distance_From_{}"]
-            # Speed
+            if agent in agents_beta:
+                self.stats[agent]["Beta"].append(1)
+            else:
+                self.stats[agent]["Beta"].append(0)
+            delta_phi = smallest_positive_angle(angle_from_goal, self.optimal_view)
+            if 0 <= delta_phi <= 90:
+                rho = np.cos(np.radians(delta_phi))
+            else:
+                rho = 0
+            self.stats[agent]["Rho"].append(rho)
+            eta = self.compute_spectral_efficiency(euclidean_distance)
+            theta = eta * (self.total_bandwidth / len(agents_beta)) if len(agents_beta) > 0 else 0
+            self.stats[agent]["Upstream_Throughput"].append(theta)
+            acceleration = actions[agent] * np.array([self.max_acceleration, self.max_acceleration])
+            self.stats[agent]["Acceleration"].append(acceleration)
+            self.stats[agent]["Speed"].append(self.previous_velocities[agent])
+            self.stats[agent]["Position"].append(self.observations[agent])
+            x, y = self.frame2matrix(self.observations[agent])
+            heuristic = self.values[agent][x, y] / self.value_scaler 
+            self.stats[agent]["Heuristic"].append(heuristic)
+
+            for j, agent2 in enumerate(self.agents):
+                if j <= i:
+                    continue
+                # Angular distance between agents
+                angle_from_goal2 = float(self.compute_angular_relevance(self.observations[agent2]))
+                angle_diff = smallest_positive_angle(angle_from_goal, angle_from_goal2)
+                self.stats[agent][f"Angular_Distance_from_{agent2}"].append(angle_diff)
             
             
 
