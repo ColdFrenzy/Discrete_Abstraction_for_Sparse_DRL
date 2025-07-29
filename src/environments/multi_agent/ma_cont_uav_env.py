@@ -866,7 +866,6 @@ class MultiAgentContinuousUAV(Env):
             else:
                 rho = 0
             self.stats[agent]["Rho"].append(rho)
-            eta = self.compute_spectral_efficiency(euclidean_distance)
             theta = eta * (self.total_bandwidth / len(agents_beta)) if len(agents_beta) > 0 else 0
             self.stats[agent]["Upstream_Throughput"].append(theta)
             acceleration = actions[agent] * np.array([self.max_acceleration, self.max_acceleration])
