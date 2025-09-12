@@ -16,17 +16,18 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
         agents_pos: dict[str, list[float,float]] = {"a1":  [0.5, 9.5], # [0.5, 0.5],
                    "a2":  [9.5, 0.5], # [1.5, 0.5],
                    "a3":  [0.5, 0.5], # [2.5, 0.5], 
-                   "a4":  [9.5, 9.5],
-                   "a5":  [0.5, 5.5],
+                #    "a4":  [9.5, 9.5],
+                #    "a5":  [0.5, 5.5],
                    },
         OBST: bool = True, # Obstacles
         BS: bool = True,    # Base station 
-        reward_type = RewardType.model, # dense = 0, sparse = 1, model = 2
+        reward_type = RewardType.sparse, # dense = 0, sparse = 1, model = 2
         max_episode_steps: int = 200,
         task: str = "encircle_target", # reach_target or encircle_target
         # for the desired orientation use the format [start_angle, end_angle]
         desired_orientations: dict[str, list[float,float]] = {"a1": [44.,46.], "a2": [134.,136.], "a3": [269., 271.]}, # None,
-        desired_distances: dict[str, list[float,float]] = {"a1": [5, 15], "a2": [5, 15], "a3": [5, 15], "a4": [5, 15], "a5": [5, 15]}, # distance from the target in meters
+        # desired distance = [1,3], [3, 5], [5, 15]
+        desired_distances: dict[str, list[float,float]] = {"a1": [5, 15], "a2": [5, 15], "a3": [5, 15]}, #, "a4": [5, 15], "a5": [5, 15]}, # distance from the target in meters
         optimal_view = 180., # east
         bs_radius = 400, # in meters
         is_slippery: bool = False,
@@ -99,6 +100,7 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
         observations, infos = self.env.reset(seed=seed)
         for agent in self.possible_agents:
             infos[agent] = {"GOAL REACHED": False}
+            infos[agent]["heuristic reward"] = 0.0
         new_observations = {}
         for agent in self.possible_agents:
             one_hot_encoding = [0 for _ in range(len(self.possible_agents))]
@@ -119,10 +121,15 @@ class MultiAgentContinuousUAVPettingZooWrapper(ParallelEnv):
             one_hot_encoding = np.array(one_hot_encoding)
             new_observations[agent] = np.concat((one_hot_encoding, observations[agent], (self.env.goal/self.env.size))) if observations[agent][0] >= 0 else np.concat((one_hot_encoding, observations[agent] , (self.env.goal/self.env.size)))
 
+            if "heuristic reward" in infos[agent]:
+                new_infos[agent]["heuristic reward"] = infos[agent]["heuristic reward"]
+            else:
+                new_infos[agent]["heuristic reward"] = 0.0
+
             if "GOAL REACHED" in infos[agent]:
                 new_infos[agent]["GOAL REACHED"] = infos[agent]["GOAL REACHED"]
             else:
-                new_infos[agent] = {"GOAL REACHED":  False}
+                new_infos[agent]["GOAL REACHED"] = False
 
         # terminate the environment only if all agents are terminated
         if not all(env_terminations.values()):

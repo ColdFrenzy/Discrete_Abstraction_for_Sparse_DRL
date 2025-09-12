@@ -62,8 +62,8 @@ def main(algos=["mappo", "mappo_hr"], seeds=[4,8,15,16,23,42], map_size=10, OBST
             agents_pos = {"a1":  [0, 9], # [0.5, 0.5],
                     "a2":  [9, 0], # [1.5, 0.5],
                     "a3":  [0, 0], # [2.5, 0.5], 
-                    "a4":  [9, 9],
-                    "a5":  [0, 5],
+                    # "a4":  [9, 9],
+                    # "a5":  [0, 5],
                    }
             if compute_qtable:
                 compute_value_function_single(map_name, size=map_size, OBST=OBST, agents=agents_pos, num_episodes=NUM_EPISODES_DISCRETE, gamma = 0.8, stochastic=is_slippery, save=True)
@@ -117,4 +117,5 @@ def main(algos=["mappo", "mappo_hr"], seeds=[4,8,15,16,23,42], map_size=10, OBST
 
 
 if __name__ == "__main__":
-    main(algos=["mappo_hr"], seeds=[4], map_size=10, OBST=True, bs = True, training = True, compute_qtable=False)
+    main(algos=["mappo"], seeds=[4,8,15], map_size=10, OBST=True, bs = True, training = True, compute_qtable=False)
+    # 4, 8, 15, 16, 23, 42

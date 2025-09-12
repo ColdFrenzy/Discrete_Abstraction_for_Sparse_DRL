@@ -150,7 +150,7 @@ class MultiAgentContinuousUAV(Env):
         # LOAD Q-TABLES
         if self.reward_type == RewardType.model:
             self.values = self.load_values()
-            self.value_scaler = 150 
+            self.value_scaler = 150 # 150 
 
     def step(self, actions: dict[str, list[float, float]]) -> Tuple[list, dict, dict, dict, dict]:
         """
@@ -428,6 +428,8 @@ class MultiAgentContinuousUAV(Env):
         ###########################################################################################
         rewards = {agent: 0 for agent in self.agents}
         log = {agent: {} for agent in self.agents}
+        for agent in self.agents:
+            log[agent]["heuristic reward"] = 0.0
         # beta indicates if the agent is in the desired distance from the goal
         agents_beta = self.compute_agents_beta
         agent_angle_from_goal = {}
@@ -435,8 +437,8 @@ class MultiAgentContinuousUAV(Env):
         if self.reward_type == RewardType.model:
             for agent in self.agents:
                 i, j = self.frame2matrix(self.observations[agent])
-                rewards[agent] = self.values[agent][i, j] / self.value_scaler 
-
+                rewards[agent] = np.float32(self.values[agent][i, j]) / self.value_scaler
+                log[agent]["heuristic reward"] = rewards[agent]
 
         for agent in agents_beta:
             goal_pos = self.goal
@@ -452,10 +454,10 @@ class MultiAgentContinuousUAV(Env):
                 # phi is the angular distance from the desired view.
                 delta_phi = smallest_positive_angle(angle_from_goal, self.optimal_view)
                 # compute cosine of the angle if the angle is in the range [0, 180] otherwise it is 0
-                if 0 <= delta_phi <= 90:
-                    rho = np.cos(np.radians(delta_phi))
+                if 0 <= delta_phi <= 180:
+                    rho = np.cos(np.radians(delta_phi)/2) # rho is in the range [0, 1]
                 else:
-                    rho = 0
+                    raise ValueError("delta_phi must be in the range [0, 180]")  
                 distance_from_bs = np.linalg.norm(self.observations[agent] - self.base_stations[0])/ self.bs_radius
                 # eta is the spectral efficiency
                 eta = self.compute_spectral_efficiency(distance_from_bs)
@@ -476,7 +478,7 @@ class MultiAgentContinuousUAV(Env):
                         angular_distance = False
             if angular_distance:
                 for agent in agent_angle_from_goal:
-                    rewards[agent] += 5
+                    rewards[agent] += 5 # / 100  # TODO: manual scaling, implement a better scaling
 
             # else:
             #     if self.desired_distance[agent][0] < distance_from_goal < self.desired_distance[agent][1]:
@@ -873,7 +875,7 @@ class MultiAgentContinuousUAV(Env):
             self.stats[agent]["Speed"].append(self.previous_velocities[agent])
             self.stats[agent]["Position"].append(self.observations[agent])
             x, y = self.frame2matrix(self.observations[agent])
-            heuristic = self.values[agent][x, y] / self.value_scaler 
+            heuristic = self.values[agent][x, y] / self.value_scaler if self.reward_type == RewardType.model else 0.0
             self.stats[agent]["Heuristic"].append(heuristic)
 
             for j, agent2 in enumerate(self.agents):
